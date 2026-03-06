@@ -1,0 +1,92 @@
+name: razorpay-payments
+version: 1.0.0
+specVersion: v1beta
+displayName: Run Payments with Razorpay
+description: Synchronizes Razorpay Customers, Plans, Subscriptions, and Payments to Cloud Firestore.
+
+author:
+  authorName: Rajiv
+  url: https://github.com/rajiv
+
+license: Apache-2.0
+
+billingRequired: true
+
+apis:
+  - apiName: iam.googleapis.com
+    reason: Required to create custom claims for role-based access.
+  - apiName: secretmanager.googleapis.com
+    reason: Required to store Razorpay API keys securely.
+
+roles:
+  - role: datastore.user
+    reason: Allows the extension to write Razorpay events and states to Cloud Firestore.
+  - role: firebaseauth.admin
+    reason: Allows the extension to set custom claims on effectively subscribed users.
+
+params:
+  - param: RAZORPAY_KEY_ID
+    label: Razorpay Key ID
+    description: Your Razorpay Key ID from the dashboard.
+    type: string
+    example: rzp_test_12345
+    required: true
+
+  - param: RAZORPAY_KEY_SECRET
+    label: Razorpay Key Secret
+    description: Your Razorpay Key Secret from the dashboard.
+    type: secret
+    example: 1234567890abcdef
+    required: true
+
+  - param: RAZORPAY_WEBHOOK_SECRET
+    label: Razorpay Webhook Secret
+    description: The secret you will configure in the Razorpay Webhooks dashboard.
+    type: secret
+    example: whsec_1234567890abcdef
+    required: true
+
+  - param: CUSTOMERS_COLLECTION
+    label: Customers Collection
+    description: Path to the Firestore collection where customer documents (and their checkout_sessions/subscriptions subcollections) are stored.
+    type: string
+    example: customers
+    default: customers
+    required: true
+
+  - param: PRODUCTS_COLLECTION
+    label: Products and Plans Collection
+    description: Path to the Firestore collection where Razorpay Items and Plans will be synced.
+    type: string
+    example: products
+    default: products
+    required: true
+
+resources:
+  - name: createOrder
+    type: firebaseextensions.v1beta.function
+    description: Creates a Razorpay Order when a Firestore checkout_session doc is created.
+    properties:
+      location: us-central1
+      runtime: nodejs20
+      eventTrigger:
+        eventType: google.firestore.document.create
+        resource: projects/${PROJECT_ID}/databases/(default)/documents/${CUSTOMERS_COLLECTION}/{uid}/checkout_sessions/{id}
+
+  - name: createSubscription
+    type: firebaseextensions.v1beta.function
+    description: Creates a Razorpay Subscription when a Firestore subscriptions doc is created.
+    properties:
+      location: us-central1
+      runtime: nodejs20
+      eventTrigger:
+        eventType: google.firestore.document.create
+        resource: projects/${PROJECT_ID}/databases/(default)/documents/${CUSTOMERS_COLLECTION}/{uid}/subscriptions/{id}
+
+  - name: razorpayWebhookHandler
+    type: firebaseextensions.v1beta.function
+    description: Handles Razorpay Webhooks to sync state back to Firestore.
+    properties:
+      location: us-central1
+      runtime: nodejs20
+      httpsTrigger: {}

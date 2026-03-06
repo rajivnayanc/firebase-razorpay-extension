@@ -1,0 +1,9 @@
+node_modules/
+lib/
+npm-debug.log
+yarn-error.log
+firebase-debug.log
+.runtimeconfig.json
+.env
+.env.*
+
