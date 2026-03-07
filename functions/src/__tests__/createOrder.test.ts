@@ -77,7 +77,7 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
     it('Behavior: should SKIP if document is already processing (prevents double order)', async () => {
         mockTransaction.get.mockResolvedValue({
-            data: () => ({ amount: 50000, status: 'processing' }), // Already locked!
+            data: () => ({ amount: 50000, status: 'processing', processing_at: { toDate: () => new Date() } }), // Already locked recently!
         });
 
         const mockEvent = {

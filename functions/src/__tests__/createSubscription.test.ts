@@ -78,7 +78,7 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
 
     it('Behavior: should SKIP if already processing (prevents double subscription)', async () => {
         mockTransaction.get.mockResolvedValue({
-            data: () => ({ plan_id: 'plan_123', status: 'processing' }),
+            data: () => ({ plan_id: 'plan_123', status: 'processing', processing_at: { toDate: () => new Date() } }),
         });
 
         const mockEvent = {

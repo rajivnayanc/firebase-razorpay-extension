@@ -6,9 +6,14 @@ const mockTransaction = {
 };
 
 jest.mock('firebase-admin', () => {
+    const docMock = {
+        get: jest.fn().mockResolvedValue({ exists: false }),
+        collection: jest.fn().mockReturnThis(),
+        doc: jest.fn().mockReturnThis()
+    };
     const firestoreMock = {
         collection: jest.fn().mockReturnThis(),
-        doc: jest.fn().mockReturnThis(),
+        doc: jest.fn(() => docMock),
         set: jest.fn().mockResolvedValue({}),
         runTransaction: jest.fn(async (fn: any) => fn(mockTransaction)),
     };
@@ -34,6 +39,8 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
 
         // Default: all transaction gets return non-existent docs
         mockTransaction.get.mockResolvedValue({ exists: false, data: () => null });
+        const docMock = admin.firestore().doc();
+        docMock.get.mockResolvedValue({ exists: false });
     });
 
     it('Behavior: should set custom claims on subscription.activated', async () => {
@@ -68,6 +75,11 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
     });
 
     it('Behavior: should remove custom claims on subscription.cancelled', async () => {
+        const admin = require('firebase-admin');
+        const docMock = admin.firestore().doc();
+        docMock.get.mockResolvedValueOnce({ exists: false }); // dedup
+        docMock.get.mockResolvedValueOnce({ exists: true, data: () => ({ status: 'active' }) }); // sub
+
         let callCount = 0;
         mockTransaction.get.mockImplementation(() => {
             callCount++;
@@ -98,8 +110,12 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
     });
 
     it('Behavior: should SKIP duplicate subscription events', async () => {
+        const admin = require('firebase-admin');
+        const docMock = admin.firestore().doc();
+        docMock.get.mockResolvedValue({ exists: true }); // dedup doc exists (outside transaction)
+
         mockTransaction.get.mockImplementation(() => {
-            return Promise.resolve({ exists: true }); // dedup doc exists
+            return Promise.resolve({ exists: true }); // dedup doc inside transaction
         });
 
         const mockEvent = {
@@ -123,6 +139,11 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
     });
 
     it('Behavior: should REJECT reactivation of cancelled subscription', async () => {
+        const admin = require('firebase-admin');
+        const docMock = admin.firestore().doc();
+        docMock.get.mockResolvedValueOnce({ exists: false }); // dedup
+        docMock.get.mockResolvedValueOnce({ exists: true, data: () => ({ status: 'cancelled' }) }); // sub (terminal!)
+
         let callCount = 0;
         mockTransaction.get.mockImplementation(() => {
             callCount++;

@@ -80,19 +80,58 @@ export const handleSubscriptionEvent = async (event: any) => {
         let shouldSetClaims = false;
         let shouldRemoveClaims = false;
 
+        // 1. Check deduplication FIRST before doing anything else (outside transaction to avoid unnecessary locks)
+        const dedupDocSnapshot = await db.collection('_razorpay_processed_events').doc(eventId).get();
+        if (dedupDocSnapshot.exists) {
+            logs.webhookProcessed(event.event, `SKIPPED (duplicate: ${eventId})`);
+            return;
+        }
+
+        // 2. Read the current subscription state outside the transaction to avoid applying claims to terminal states
+        const subDocSnapshot = await docRef.get();
+        const preTxCurrentStatus = subDocSnapshot.exists ? subDocSnapshot.data()?.status : null;
+
+        if (isTerminalSubscriptionStatus(preTxCurrentStatus)) {
+            logs.webhookProcessed(event.event, `SKIPPED (terminal state: ${preTxCurrentStatus})`);
+            return;
+        }
+
+        if (newStatus && !isValidSubscriptionTransition(preTxCurrentStatus, newStatus)) {
+            logs.error(new Error(`Invalid subscription transition: ${preTxCurrentStatus} → ${newStatus} for ${subscriptionEntity.id}`));
+            return;
+        }
+
+        // 3. Flag claims changes
+        if (event.event === 'subscription.activated' || event.event === 'subscription.charged') {
+            shouldSetClaims = true;
+        } else if (event.event === 'subscription.cancelled' || event.event === 'subscription.halted') {
+            shouldRemoveClaims = true;
+        }
+
+        // 3. Manage Custom Claims BEFORE the transaction
+        // Uses serialized lock to prevent concurrent claim updates for the same user
+        // This is safe because updateCustomClaimsWithLock is inherently idempotent
+        const role = subscriptionEntity.notes?.firebaseRole;
+        if (role && shouldSetClaims) {
+            await updateCustomClaimsWithLock(db, uid, 'set', role);
+        } else if (role && shouldRemoveClaims) {
+            await updateCustomClaimsWithLock(db, uid, 'remove', role);
+        }
+
+        // 4. Update Firestore Subscriptions state & Dedup Doc
         await db.runTransaction(async (t) => {
-            // 1. Deduplication check
+            // Deduplication check inside transaction to prevent race conditions
             const dedupDoc = await t.get(dedupRef);
             if (dedupDoc.exists) {
                 logs.webhookProcessed(event.event, `SKIPPED (duplicate: ${eventId})`);
                 return;
             }
 
-            // 2. Read current subscription state
+            // Read current subscription state inside transaction
             const subDoc = await t.get(docRef);
             const currentStatus = subDoc.exists ? subDoc.data()?.status : null;
 
-            // 3. Enforce state machine
+            // Enforce state machine (again strictly inside transaction)
             if (isTerminalSubscriptionStatus(currentStatus)) {
                 logs.webhookProcessed(event.event, `SKIPPED (terminal state: ${currentStatus})`);
                 return;
@@ -119,23 +158,7 @@ export const handleSubscriptionEvent = async (event: any) => {
                 event: event.event,
                 entityId: subscriptionEntity.id,
             });
-
-            // 5. Flag claims changes (execute OUTSIDE main transaction)
-            if (event.event === 'subscription.activated' || event.event === 'subscription.charged') {
-                shouldSetClaims = true;
-            } else if (event.event === 'subscription.cancelled' || event.event === 'subscription.halted') {
-                shouldRemoveClaims = true;
-            }
         });
-
-        // Manage Custom Claims AFTER successful transaction
-        // Uses serialized lock to prevent concurrent claim updates for the same user
-        const role = subscriptionEntity.notes?.firebaseRole;
-        if (role && shouldSetClaims) {
-            await updateCustomClaimsWithLock(db, uid, 'set', role);
-        } else if (role && shouldRemoveClaims) {
-            await updateCustomClaimsWithLock(db, uid, 'remove', role);
-        }
 
         logs.webhookProcessed(event.event, subscriptionEntity.id);
     } catch (error: any) {

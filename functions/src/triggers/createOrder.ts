@@ -46,9 +46,17 @@ export const createOrderHandler = async (event: any) => {
             const currentData = docSnapshot.data();
 
             // Guard: already has order or is in a non-initial state
-            if (!currentData || currentData.order_id || currentData.status === 'processing' ||
-                currentData.status === 'created' || currentData.status === 'paid') {
+            if (!currentData || currentData.order_id || currentData.status === 'created' || currentData.status === 'paid') {
                 return;
+            }
+
+            // If processing, check if it's stuck (e.g., > 2 minutes)
+            if (currentData.status === 'processing') {
+                const processingAt = currentData.processing_at?.toDate();
+                if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
+                    return; // Still processing normally
+                }
+                logs.info(`Retrying stuck order creation for session ${event.params.id}`);
             }
 
             // Server-side amount validation

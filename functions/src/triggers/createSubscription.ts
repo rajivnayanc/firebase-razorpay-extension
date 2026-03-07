@@ -47,9 +47,17 @@ export const createSubscriptionHandler = async (event: any) => {
             const currentData = docSnapshot.data();
 
             // Guard: already has subscription or is in a non-initial state
-            if (!currentData || currentData.subscription_id || currentData.status === 'processing' ||
-                currentData.status === 'created' || currentData.status === 'active') {
+            if (!currentData || currentData.subscription_id || currentData.status === 'created' || currentData.status === 'active') {
                 return;
+            }
+
+            // If processing, check if it's stuck (e.g., > 2 minutes)
+            if (currentData.status === 'processing') {
+                const processingAt = currentData.processing_at?.toDate();
+                if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
+                    return; // Still processing normally
+                }
+                logs.info(`Retrying stuck subscription creation for ${event.params.id}`);
             }
 
             // Server-side validation: plan_id is required

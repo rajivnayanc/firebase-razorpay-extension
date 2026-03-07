@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import Razorpay from 'razorpay';
 import config from '../config';
 import { logs } from '../logs';
 
@@ -10,6 +11,18 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+
+// Lazy-init Razorpay: secrets aren't available at module load time
+let razorpay: InstanceType<typeof Razorpay>;
+function getRazorpay() {
+    if (!razorpay) {
+        razorpay = new Razorpay({
+            key_id: config.razorpayKeyId,
+            key_secret: config.razorpayKeySecret,
+        });
+    }
+    return razorpay;
+}
 
 /**
  * Cleans up Razorpay subscription data and removes custom claims
@@ -34,12 +47,25 @@ export const onUserDeleted = functions.firestore
                 .get();
 
             const batch = db.batch();
-            subscriptionsSnap.forEach((doc) => {
+            for (const doc of subscriptionsSnap.docs) {
+                const subscriptionId = doc.data().subscription_id;
+
+                // Cancel explicitly in Razorpay API
+                if (subscriptionId) {
+                    try {
+                        await getRazorpay().subscriptions.cancel(subscriptionId);
+                        logs.info(`Cancelled Razorpay subscription ${subscriptionId} for deleted user ${uid}`);
+                    } catch (rpError: any) {
+                        logs.error(`Failed to cancel Razorpay subscription ${subscriptionId}: ${rpError.message || rpError}`);
+                        // Even if Razorpay fails, continue cleanup in Firestore to prevent stale records
+                    }
+                }
+
                 batch.update(doc.ref, {
                     status: 'cancelled',
                     ended_at: FieldValue.serverTimestamp(),
                 });
-            });
+            }
 
             if (!subscriptionsSnap.empty) {
                 await batch.commit();
