@@ -15,7 +15,7 @@ This extension uses the following Firebase services which may have associated ch
 - **Cloud Firestore** — reads and writes for payment state, product catalogs, and deduplication records
 - **Cloud Functions** — function invocations for Firestore triggers and webhook processing
 - **Cloud Secret Manager** — secure storage and access for your Razorpay API keys
-- **Firebase Authentication** — custom claims management for subscribers
+- **Firebase Authentication** — custom claims management for subscribers (requires adding a `firebaseRole` Note to your Razorpay Plans)
 - If you enable events, [Eventarc fees apply](https://cloud.google.com/eventarc/pricing).
 
 This extension also uses the following third-party services:

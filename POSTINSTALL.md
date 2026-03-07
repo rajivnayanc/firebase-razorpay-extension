@@ -65,6 +65,16 @@ await firebase.firestore()
 
 Products and Plans are automatically synced from Razorpay to the `${param:PRODUCTS_COLLECTION}` collection via webhooks.
 
+### Role-based Access Control (Custom Claims)
+
+You can automatically grant Firebase Auth custom claims to users when they subscribe to specific plans.
+
+1. Open your Razorpay Dashboard and navigate to your **Plans**.
+2. Add a new **Note** to the Plan. Set the key to `firebaseRole` and the value to the custom claim you want applied (e.g., `admin` or `premium`).
+3. The extension will automatically set and remove this claim as the subscription lifecycle changes (activated, cancelled, etc.).
+
+> **Security Note:** Custom claims are fetched from Razorpay directly to prevent privilege escalation. Do not pass the `firebaseRole` field from the client.
+
 ## Verify a Payment
 
 Use the verify endpoint to confirm payment authenticity:

@@ -39,6 +39,7 @@ export const createSubscriptionHandler = async (event: any) => {
     // Two concurrent triggers cannot both acquire the "processing" lock
     let shouldCreateSubscription = false;
     let subscriptionData: any = null;
+    let secureRole = '';
 
     try {
         await db.runTransaction(async (t) => {
@@ -58,6 +59,16 @@ export const createSubscriptionHandler = async (event: any) => {
                     error: 'Missing required field: plan_id',
                 });
                 return;
+            }
+
+            // Securely fetch the plan document to get the assigned firebaseRole
+            const planRef = db.collection(config.productsCollectionPath).doc(currentData.plan_id);
+            const planDoc = await t.get(planRef);
+
+            if (planDoc.exists) {
+                const planData = planDoc.data() || {};
+                // Prefer the razorpay webhook synced notes field, fallback to manually set string
+                secureRole = planData.razorpay_notes_firebaseRole || planData.firebaseRole || '';
             }
 
             // Acquire lock atomically
@@ -81,7 +92,7 @@ export const createSubscriptionHandler = async (event: any) => {
             notes: {
                 uid: event.params.uid,
                 subscriptionId: event.params.id,
-                firebaseRole: subscriptionData.firebaseRole || '',
+                firebaseRole: secureRole,
             },
         };
 

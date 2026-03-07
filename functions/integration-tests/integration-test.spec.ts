@@ -419,7 +419,7 @@ describe('Integration: Product/Plan Sync', () => {
                         amount: 99900,
                         currency: 'INR',
                         active: true,
-                        metadata: {
+                        notes: {
                             tier: 'premium',
                         },
                     },
@@ -441,7 +441,7 @@ describe('Integration: Product/Plan Sync', () => {
         const data = productDoc.data();
         expect(data?.name).toBe('Premium Plan');
         expect(data?.amount).toBe(99900);
-        expect(data?.razorpay_metadata_tier).toBe('premium');
+        expect(data?.razorpay_notes_tier).toBe('premium');
     });
 
     it('should delete product on item.deleted webhook', async () => {
@@ -595,14 +595,14 @@ describe('Integration: onUserDeleted Lifecycle', () => {
             .doc(uid)
             .collection('subscriptions')
             .doc('sub_active_1')
-            .set({ plan_id: 'plan_1', status: 'active' });
+            .set({ plan_id: 'plan_1', status: 'active', notes: { firebaseRole: 'premium' } });
 
         await db
             .collection('customers')
             .doc(uid)
             .collection('subscriptions')
             .doc('sub_active_2')
-            .set({ plan_id: 'plan_2', status: 'authenticated' });
+            .set({ plan_id: 'plan_2', status: 'authenticated', notes: { firebaseRole: 'admin' } });
 
         // Wait for writes to settle before triggering delete
         await wait(2000);

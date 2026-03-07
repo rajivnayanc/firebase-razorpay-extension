@@ -11,13 +11,13 @@ const ALLOWED_PRODUCT_FIELDS = [
 ];
 
 /**
- * Prefix Razorpay metadata keys with `razorpay_metadata_` to prevent
+ * Prefix Razorpay notes keys with `razorpay_notes_` to prevent
  * collision with user's own Firestore fields.
- * Follows Stripe extension's `stripe_metadata_*` pattern.
+ * Follows Stripe extension's notes/metadata pattern.
  */
-function prefixMetadata(metadata: Record<string, any>): Record<string, any> {
-    return Object.keys(metadata).reduce((prefixed, key) => {
-        prefixed[`razorpay_metadata_${key}`] = metadata[key];
+function prefixNotes(notes: Record<string, any>): Record<string, any> {
+    return Object.keys(notes).reduce((prefixed, key) => {
+        prefixed[`razorpay_notes_${key}`] = notes[key];
         return prefixed;
     }, {} as Record<string, any>);
 }
@@ -29,9 +29,9 @@ function sanitizeEntity(entity: any): Record<string, any> {
             sanitized[key] = entity[key];
         }
     }
-    // Safely prefix any metadata from the entity
-    if (entity.metadata && typeof entity.metadata === 'object') {
-        Object.assign(sanitized, prefixMetadata(entity.metadata));
+    // Safely prefix any notes from the entity
+    if (entity.notes && typeof entity.notes === 'object') {
+        Object.assign(sanitized, prefixNotes(entity.notes));
     }
     return sanitized;
 }

@@ -48,16 +48,32 @@ export const onUserDeleted = functions.firestore
                 );
             }
 
-            // 2. Remove custom claims
+            // 2. Remove custom claims dynamically
             try {
                 const user = await admin.auth().getUser(uid);
-                if (user.customClaims?.razorpayRole) {
-                    const { razorpayRole, ...remainingClaims } =
-                        user.customClaims;
-                    await admin
-                        .auth()
-                        .setCustomUserClaims(uid, remainingClaims);
-                    logs.info(`Removed razorpayRole claim for user ${uid}`);
+                if (user.customClaims) {
+                    const rolesToRemove = new Set<string>();
+                    subscriptionsSnap.forEach((doc) => {
+                        const role = doc.data().notes?.firebaseRole || doc.data().razorpay_notes_firebaseRole;
+                        if (role) rolesToRemove.add(role);
+                    });
+
+                    if (rolesToRemove.size > 0) {
+                        const remainingClaims = { ...user.customClaims };
+                        let claimsModified = false;
+
+                        rolesToRemove.forEach(role => {
+                            if (remainingClaims[role]) {
+                                delete remainingClaims[role];
+                                claimsModified = true;
+                            }
+                        });
+
+                        if (claimsModified) {
+                            await admin.auth().setCustomUserClaims(uid, remainingClaims);
+                            logs.info(`Removed custom claims [${Array.from(rolesToRemove).join(', ')}] for user ${uid}`);
+                        }
+                    }
                 }
             } catch (authError: any) {
                 // User may already be deleted from Auth

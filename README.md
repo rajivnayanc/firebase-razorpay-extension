@@ -86,6 +86,16 @@ await firebase.firestore()
   });
 ```
 
+### Role-based Access Control (Custom Claims)
+
+This extension can automatically manage Firebase Authentication custom claims based on a user's subscription status.
+
+To configure this:
+1. In the Razorpay Dashboard, edit your **Plan** and add an internal Note.
+2. Set the key to `firebaseRole` and the value to the role you want to grant (e.g., `premium`).
+3. When a user subscribes to this plan, they will automatically be granted the `premium` custom claim. If the subscription is cancelled or halted, the claim is automatically removed.
+4. If a user's account is deleted, the extension cleans up all dynamically granted custom claims.
+
 ## Webhook Setup
 
 After installing, configure your Razorpay webhook:
