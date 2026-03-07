@@ -1,7 +1,48 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import config from '../config';
 import { logs } from '../logs';
 import { isValidSubscriptionTransition, isTerminalSubscriptionStatus } from '../stateMachine';
+
+/**
+ * Serialize custom claims updates per user using a Firestore document lock.
+ * This prevents race conditions when two subscription events try to modify
+ * claims for the same user simultaneously.
+ */
+async function updateCustomClaimsWithLock(
+    db: admin.firestore.Firestore,
+    uid: string,
+    operation: 'set' | 'remove',
+    role: string
+): Promise<void> {
+    const lockRef = db.collection('_razorpay_claims_locks').doc(uid);
+
+    await db.runTransaction(async (t) => {
+        // Acquire lock (or read existing state)
+        // Read lock doc to serialize concurrent claim updates for this user
+        await t.get(lockRef);
+
+        // Read fresh claims from Auth
+        const userRec = await admin.auth().getUser(uid);
+        const currentClaims = { ...(userRec.customClaims || {}) };
+
+        if (operation === 'set') {
+            currentClaims[role] = true;
+        } else if (operation === 'remove') {
+            delete currentClaims[role];
+        }
+
+        // Write claims atomically
+        await admin.auth().setCustomUserClaims(uid, currentClaims);
+
+        // Update lock timestamp to track last claims update
+        t.set(lockRef, {
+            lastUpdated: FieldValue.serverTimestamp(),
+            lastRole: role,
+            lastOperation: operation,
+        });
+    });
+}
 
 export const handleSubscriptionEvent = async (event: any) => {
     const db = admin.firestore();
@@ -68,17 +109,18 @@ export const handleSubscriptionEvent = async (event: any) => {
                 status: newStatus,
                 _razorpay_event: event.event,
                 _last_event_id: eventId,
-                updated_at: admin.firestore.FieldValue.serverTimestamp(),
+                updated_at: FieldValue.serverTimestamp(),
             };
 
             t.set(docRef, dataToWrite, { merge: true });
             t.set(dedupRef, {
-                processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                processedAt: FieldValue.serverTimestamp(),
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7-day TTL
                 event: event.event,
                 entityId: subscriptionEntity.id,
             });
 
-            // 5. Flag claims changes (execute OUTSIDE transaction to avoid Firestore-only limitation)
+            // 5. Flag claims changes (execute OUTSIDE main transaction)
             if (event.event === 'subscription.activated' || event.event === 'subscription.charged') {
                 shouldSetClaims = true;
             } else if (event.event === 'subscription.cancelled' || event.event === 'subscription.halted') {
@@ -87,16 +129,12 @@ export const handleSubscriptionEvent = async (event: any) => {
         });
 
         // Manage Custom Claims AFTER successful transaction
+        // Uses serialized lock to prevent concurrent claim updates for the same user
         const role = subscriptionEntity.notes?.firebaseRole;
         if (role && shouldSetClaims) {
-            await admin.auth().setCustomUserClaims(uid, { [role]: true });
+            await updateCustomClaimsWithLock(db, uid, 'set', role);
         } else if (role && shouldRemoveClaims) {
-            const userRec = await admin.auth().getUser(uid);
-            const currentClaims = userRec.customClaims || {};
-            if (currentClaims[role]) {
-                delete currentClaims[role];
-                await admin.auth().setCustomUserClaims(uid, currentClaims);
-            }
+            await updateCustomClaimsWithLock(db, uid, 'remove', role);
         }
 
         logs.webhookProcessed(event.event, subscriptionEntity.id);

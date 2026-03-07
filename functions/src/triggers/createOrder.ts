@@ -1,4 +1,5 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import config from '../config';
@@ -9,10 +10,19 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-const razorpay = new Razorpay({
-    key_id: config.razorpayKeyId,
-    key_secret: config.razorpayKeySecret,
-});
+// Lazy-init Razorpay: secrets aren't available at module load time
+// (Cloud Secret Manager injects them only at function invocation)
+let razorpay: InstanceType<typeof Razorpay>;
+function getRazorpay() {
+    if (!razorpay) {
+        razorpay = new Razorpay({
+            key_id: config.razorpayKeyId,
+            key_secret: config.razorpayKeySecret,
+        });
+    }
+    return razorpay;
+}
+
 
 export const createOrderHandler = async (event: any) => {
     // Only process if it matches the configured collection
@@ -27,7 +37,6 @@ export const createOrderHandler = async (event: any) => {
     const db = admin.firestore();
 
     // Use Firestore Transaction to prevent TOCTOU race condition
-    // Two concurrent triggers cannot both acquire the "processing" lock
     let shouldCreateOrder = false;
     let orderData: any = null;
 
@@ -54,7 +63,7 @@ export const createOrderHandler = async (event: any) => {
             // Acquire lock atomically
             t.update(snap.ref, {
                 status: 'processing',
-                processing_at: admin.firestore.FieldValue.serverTimestamp(),
+                processing_at: FieldValue.serverTimestamp(),
             });
 
             shouldCreateOrder = true;
@@ -63,24 +72,56 @@ export const createOrderHandler = async (event: any) => {
 
         if (!shouldCreateOrder || !orderData) return;
 
-        // Create Razorpay Order (OUTSIDE transaction — external API calls must not be in transactions)
-        const options = {
-            amount: orderData.amount,
-            currency: orderData.currency || 'INR',
-            receipt: event.params.id,
-            notes: {
-                uid: event.params.uid,
-                sessionId: event.params.id,
-            },
-        };
+        // Receipt-based duplicate check: use Firestore doc ID as receipt
+        // If a previous attempt created an order with this receipt, reuse it
+        const receipt = event.params.id;
+        let order: any;
 
-        const order = await razorpay.orders.create(options);
-        logs.orderCreated(order.id, snap.ref.path);
+        try {
+            const existingOrders = await getRazorpay().orders.all({ receipt });
+            const matchingOrder = existingOrders?.items?.find(
+                (o: any) => o.receipt === receipt && (o.status === 'created' || o.status === 'paid')
+            );
+
+            if (matchingOrder) {
+                // Reuse existing order instead of creating a duplicate
+                order = matchingOrder;
+                logs.orderCreated(order.id, `${snap.ref.path} (reused existing)`);
+            } else {
+                // Create new Razorpay Order
+                const options = {
+                    amount: orderData.amount,
+                    currency: orderData.currency || 'INR',
+                    receipt,
+                    notes: {
+                        uid: event.params.uid,
+                        sessionId: event.params.id,
+                    },
+                };
+
+                order = await getRazorpay().orders.create(options);
+                logs.orderCreated(order.id, snap.ref.path);
+            }
+        } catch (fetchError: any) {
+            // If the receipt lookup fails, fall back to creating a new order
+            const options = {
+                amount: orderData.amount,
+                currency: orderData.currency || 'INR',
+                receipt,
+                notes: {
+                    uid: event.params.uid,
+                    sessionId: event.params.id,
+                },
+            };
+
+            order = await getRazorpay().orders.create(options);
+            logs.orderCreated(order.id, snap.ref.path);
+        }
 
         await snap.ref.update({
             order_id: order.id,
             status: 'created',
-            created_at: admin.firestore.FieldValue.serverTimestamp(),
+            created_at: FieldValue.serverTimestamp(),
         });
 
     } catch (error: any) {

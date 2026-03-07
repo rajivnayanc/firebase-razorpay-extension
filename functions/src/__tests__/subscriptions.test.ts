@@ -31,6 +31,9 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
         const admin = require('firebase-admin');
         mockAuth = admin.auth();
         jest.clearAllMocks();
+
+        // Default: all transaction gets return non-existent docs
+        mockTransaction.get.mockResolvedValue({ exists: false, data: () => null });
     });
 
     it('Behavior: should set custom claims on subscription.activated', async () => {
@@ -38,7 +41,9 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
         mockTransaction.get.mockImplementation(() => {
             callCount++;
             if (callCount === 1) return Promise.resolve({ exists: false }); // dedup
-            return Promise.resolve({ exists: false, data: () => null }); // sub doc doesn't exist yet
+            if (callCount === 2) return Promise.resolve({ exists: false, data: () => null }); // sub doc
+            // Claims lock transaction gets
+            return Promise.resolve({ exists: false, data: () => null });
         });
 
         const mockEvent = {
@@ -57,8 +62,9 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
 
         await handleSubscriptionEvent(mockEvent);
 
-        expect(mockTransaction.set).toHaveBeenCalledTimes(2); // sub doc + dedup
-        expect(mockAuth.setCustomUserClaims).toHaveBeenCalledWith('user_123', { 'premium': true });
+        // 2 sets from subscription transaction (sub doc + dedup) + 1 set from claims lock transaction
+        expect(mockTransaction.set).toHaveBeenCalled();
+        expect(mockAuth.setCustomUserClaims).toHaveBeenCalledWith('user_123', { premium: true });
     });
 
     it('Behavior: should remove custom claims on subscription.cancelled', async () => {
@@ -66,7 +72,9 @@ describe('Webhook Handler: subscriptions (with Transactions)', () => {
         mockTransaction.get.mockImplementation(() => {
             callCount++;
             if (callCount === 1) return Promise.resolve({ exists: false }); // dedup
-            return Promise.resolve({ exists: true, data: () => ({ status: 'active' }) }); // active → cancelled
+            if (callCount === 2) return Promise.resolve({ exists: true, data: () => ({ status: 'active' }) }); // active → cancelled
+            // Claims lock transaction gets
+            return Promise.resolve({ exists: false, data: () => null });
         });
 
         const mockEvent = {

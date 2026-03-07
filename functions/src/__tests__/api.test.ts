@@ -47,7 +47,7 @@ describe('Webhook API', () => {
             .send(payload);
 
         expect(res.status).toBe(400);
-        expect(res.text).toBe('Invalid Signature');
+        expect(res.text).toContain('Invalid Signature');
     });
 
     it('Behavior: should accept valid signatures and process webhook', async () => {

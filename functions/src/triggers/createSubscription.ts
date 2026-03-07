@@ -1,3 +1,4 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
@@ -9,10 +10,18 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-const razorpay = new Razorpay({
-    key_id: config.razorpayKeyId,
-    key_secret: config.razorpayKeySecret,
-});
+// Lazy-init Razorpay: secrets aren't available at module load time
+let razorpay: InstanceType<typeof Razorpay>;
+function getRazorpay() {
+    if (!razorpay) {
+        razorpay = new Razorpay({
+            key_id: config.razorpayKeyId,
+            key_secret: config.razorpayKeySecret,
+        });
+    }
+    return razorpay;
+}
+
 
 export const createSubscriptionHandler = async (event: any) => {
     // Only process if it matches the configured collection
@@ -24,35 +33,66 @@ export const createSubscriptionHandler = async (event: any) => {
         return;
     }
 
-    const data = snap.data();
+    const db = admin.firestore();
 
-    // Check if subscription already processing or created
-    if (data.subscription_id || data.status === 'processing') return;
+    // Use Firestore Transaction to prevent TOCTOU race condition
+    // Two concurrent triggers cannot both acquire the "processing" lock
+    let shouldCreateSubscription = false;
+    let subscriptionData: any = null;
 
     try {
-        await snap.ref.update({ status: 'processing' });
+        await db.runTransaction(async (t) => {
+            const docSnapshot = await t.get(snap.ref as admin.firestore.DocumentReference);
+            const currentData = docSnapshot.data();
 
-        // Create Razorpay Subscription
+            // Guard: already has subscription or is in a non-initial state
+            if (!currentData || currentData.subscription_id || currentData.status === 'processing' ||
+                currentData.status === 'created' || currentData.status === 'active') {
+                return;
+            }
+
+            // Server-side validation: plan_id is required
+            if (!currentData.plan_id) {
+                t.update(snap.ref, {
+                    status: 'failed',
+                    error: 'Missing required field: plan_id',
+                });
+                return;
+            }
+
+            // Acquire lock atomically
+            t.update(snap.ref, {
+                status: 'processing',
+                processing_at: FieldValue.serverTimestamp(),
+            });
+
+            shouldCreateSubscription = true;
+            subscriptionData = currentData;
+        });
+
+        if (!shouldCreateSubscription || !subscriptionData) return;
+
+        // Create Razorpay Subscription (OUTSIDE transaction — external API calls must not be in transactions)
         const options = {
-            plan_id: data.plan_id,
-            total_count: data.total_count || 12, // Default to 12 billing cycles if not provided
-            quantity: data.quantity || 1,
-            customer_id: data.razorpay_customer_id, // Ensure customer is already created in Razorpay
+            plan_id: subscriptionData.plan_id,
+            total_count: subscriptionData.total_count || 12,
+            quantity: subscriptionData.quantity || 1,
+            customer_id: subscriptionData.razorpay_customer_id,
             notes: {
                 uid: event.params.uid,
                 subscriptionId: event.params.id,
-                firebaseRole: data.firebaseRole || '',
+                firebaseRole: subscriptionData.firebaseRole || '',
             },
         };
 
-        const subscription = await razorpay.subscriptions.create(options);
+        const subscription = await getRazorpay().subscriptions.create(options);
         logs.subscriptionCreated(subscription.id, snap.ref.path);
 
         await snap.ref.update({
             subscription_id: subscription.id,
             status: subscription.status,
             short_url: subscription.short_url,
-            created_at: admin.firestore.FieldValue.serverTimestamp(),
+            created_at: FieldValue.serverTimestamp(),
         });
 
     } catch (error: any) {

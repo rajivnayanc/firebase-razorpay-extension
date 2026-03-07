@@ -1,92 +1,220 @@
 name: razorpay-payments
 version: 1.0.0
 specVersion: v1beta
+
 displayName: Run Payments with Razorpay
-description: Synchronizes Razorpay Customers, Plans, Subscriptions, and Payments to Cloud Firestore.
+description: >-
+  Synchronizes Razorpay Customers, Plans, Subscriptions, and Payments
+  to Cloud Firestore. Supports one-time payments, recurring subscriptions,
+  and real-time webhook sync with idempotent state management.
+
+icon: icon.png
+tags: [payments]
+
+sourceUrl: https://github.com/AiTaskFlows/razorpay-firebase-extension
+releaseNotesUrl: https://github.com/AiTaskFlows/razorpay-firebase-extension/blob/main/CHANGELOG.md
 
 author:
   authorName: Rajiv
-  url: https://github.com/rajiv
+  url: https://github.com/AiTaskFlows
 
 license: Apache-2.0
 
 billingRequired: true
 
+externalServices:
+  - name: Razorpay
+    pricingUri: https://razorpay.com/pricing
+
 apis:
   - apiName: iam.googleapis.com
-    reason: Required to create custom claims for role-based access.
+    reason: Required to set custom claims for role-based access control.
   - apiName: secretmanager.googleapis.com
-    reason: Required to store Razorpay API keys securely.
+    reason: Required to securely store and access Razorpay API keys.
 
 roles:
   - role: datastore.user
-    reason: Allows the extension to write Razorpay events and states to Cloud Firestore.
+    reason: >-
+      Allows the extension to read and write Razorpay events, orders,
+      subscriptions, and product data to Cloud Firestore.
   - role: firebaseauth.admin
-    reason: Allows the extension to set custom claims on effectively subscribed users.
+    reason: >-
+      Allows the extension to set custom claims on users with active
+      subscriptions and clean up on user deletion.
+
+resources:
+  - name: createOrder
+    type: firebaseextensions.v1beta.v2function
+    description: >-
+      Creates a Razorpay Order when a Firestore checkout_session document
+      is created. Uses Firestore transactions for idempotency.
+    properties:
+      buildConfig:
+        runtime: nodejs20
+      location: ${LOCATION}
+      eventTrigger:
+        eventType: google.cloud.firestore.document.v1.created
+        eventFilters:
+          - attribute: database
+            value: (default)
+          - attribute: document
+            value: ${CUSTOMERS_COLLECTION}/{uid}/checkout_sessions/{id}
+
+  - name: createSubscription
+    type: firebaseextensions.v1beta.v2function
+    description: >-
+      Creates a Razorpay Subscription when a Firestore subscriptions
+      document is created. Uses Firestore transactions for idempotency.
+    properties:
+      buildConfig:
+        runtime: nodejs20
+      location: ${LOCATION}
+      eventTrigger:
+        eventType: google.cloud.firestore.document.v1.created
+        eventFilters:
+          - attribute: database
+            value: (default)
+          - attribute: document
+            value: ${CUSTOMERS_COLLECTION}/{uid}/subscriptions/{id}
+
+  - name: razorpayWebhookHandler
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Handles incoming Razorpay webhook events to sync payment, subscription,
+      and product state back to Firestore with idempotent processing.
+    properties:
+      buildConfig:
+        runtime: nodejs20
+      location: ${LOCATION}
+      httpsTrigger: true
+
+  - name: onUserDeleted
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Cleans up Razorpay subscription data and removes custom claims
+      when a user is deleted from Firebase Authentication.
+    properties:
+      buildConfig:
+        runtime: nodejs20
+      location: ${LOCATION}
+      eventTrigger:
+        eventType: providers/cloud.firestore/eventTypes/document.delete
+        resource: projects/${PROJECT_ID}/databases/(default)/documents/${CUSTOMERS_COLLECTION}/{uid}
 
 params:
+  - param: LOCATION
+    label: Cloud Functions deployment location
+    description: >-
+      Where do you want to deploy the functions created for this extension?
+      You usually want a location close to your database. For help selecting
+      a location, refer to the [location selection
+      guide](https://firebase.google.com/docs/functions/locations).
+    type: select
+    options:
+      - label: Iowa (us-central1)
+        value: us-central1
+      - label: South Carolina (us-east1)
+        value: us-east1
+      - label: Northern Virginia (us-east4)
+        value: us-east4
+      - label: Oregon (us-west1)
+        value: us-west1
+      - label: Belgium (europe-west1)
+        value: europe-west1
+      - label: London (europe-west2)
+        value: europe-west2
+      - label: Frankfurt (europe-west3)
+        value: europe-west3
+      - label: Hong Kong (asia-east2)
+        value: asia-east2
+      - label: Tokyo (asia-northeast1)
+        value: asia-northeast1
+      - label: Mumbai (asia-south1)
+        value: asia-south1
+      - label: Singapore (asia-southeast1)
+        value: asia-southeast1
+      - label: Sydney (australia-southeast1)
+        value: australia-southeast1
+    default: us-central1
+    required: true
+    immutable: true
+
   - param: RAZORPAY_KEY_ID
     label: Razorpay Key ID
-    description: Your Razorpay Key ID from the dashboard.
-    type: string
+    description: >-
+      Your Razorpay Key ID from the
+      [Razorpay Dashboard](https://dashboard.razorpay.com/app/keys).
+    type: secret
     example: rzp_test_12345
     required: true
 
   - param: RAZORPAY_KEY_SECRET
     label: Razorpay Key Secret
-    description: Your Razorpay Key Secret from the dashboard.
+    description: >-
+      Your Razorpay Key Secret from the
+      [Razorpay Dashboard](https://dashboard.razorpay.com/app/keys).
     type: secret
     example: 1234567890abcdef
     required: true
 
   - param: RAZORPAY_WEBHOOK_SECRET
     label: Razorpay Webhook Secret
-    description: The secret you will configure in the Razorpay Webhooks dashboard.
+    description: >-
+      The secret you will configure in the Razorpay Webhook dashboard.
+      This is used to verify webhook signatures.
     type: secret
     example: whsec_1234567890abcdef
     required: true
 
   - param: CUSTOMERS_COLLECTION
-    label: Customers Collection
-    description: Path to the Firestore collection where customer documents (and their checkout_sessions/subscriptions subcollections) are stored.
-    type: string
-    example: customers
+    label: Customer details and subscriptions collection
+    description: >-
+      Path to the Firestore collection where customer documents (and their
+      checkout_sessions and subscriptions subcollections) are stored.
     default: customers
+    validationRegex: "^[^/]+(/[^/]+/[^/]+)*$"
+    validationErrorMessage: >-
+      Firestore collection paths must be an odd number of segments
+      separated by slashes, e.g. "path/to/collection".
     required: true
 
   - param: PRODUCTS_COLLECTION
-    label: Products and Plans Collection
-    description: Path to the Firestore collection where Razorpay Items and Plans will be synced.
-    type: string
-    example: products
+    label: Products and Plans collection
+    description: >-
+      Path to the Firestore collection where Razorpay Items and Plans
+      will be synced via webhooks.
     default: products
+    validationRegex: "^[^/]+(/[^/]+/[^/]+)*$"
+    validationErrorMessage: >-
+      Firestore collection paths must be an odd number of segments
+      separated by slashes, e.g. "path/to/collection".
     required: true
 
-resources:
-  - name: createOrder
-    type: firebaseextensions.v1beta.function
-    description: Creates a Razorpay Order when a Firestore checkout_session doc is created.
-    properties:
-      location: us-central1
-      runtime: nodejs20
-      eventTrigger:
-        eventType: google.firestore.document.create
-        resource: projects/${PROJECT_ID}/databases/(default)/documents/${CUSTOMERS_COLLECTION}/{uid}/checkout_sessions/{id}
+  - param: ALLOWED_ORIGINS
+    label: Allowed CORS Origins
+    description: >-
+      Comma-separated list of allowed origins for client-facing API
+      endpoints (verify-payment, verify-order). Leave empty to allow
+      all origins (not recommended for production).
+    type: string
+    example: https://myapp.web.app,https://myapp.firebaseapp.com
+    default: ""
+    required: false
 
-  - name: createSubscription
-    type: firebaseextensions.v1beta.function
-    description: Creates a Razorpay Subscription when a Firestore subscriptions doc is created.
-    properties:
-      location: us-central1
-      runtime: nodejs20
-      eventTrigger:
-        eventType: google.firestore.document.create
-        resource: projects/${PROJECT_ID}/databases/(default)/documents/${CUSTOMERS_COLLECTION}/{uid}/subscriptions/{id}
-
-  - name: razorpayWebhookHandler
-    type: firebaseextensions.v1beta.function
-    description: Handles Razorpay Webhooks to sync state back to Firestore.
-    properties:
-      location: us-central1
-      runtime: nodejs20
-      httpsTrigger: {}
+events:
+  - type: com.razorpay.v1.order.paid
+    description: Occurs when a Razorpay order is paid.
+  - type: com.razorpay.v1.payment.captured
+    description: Occurs when a payment is successfully captured.
+  - type: com.razorpay.v1.payment.failed
+    description: Occurs when a payment attempt fails.
+  - type: com.razorpay.v1.subscription.activated
+    description: Occurs when a subscription is activated.
+  - type: com.razorpay.v1.subscription.cancelled
+    description: Occurs when a subscription is cancelled.
+  - type: com.razorpay.v1.item.created
+    description: Occurs when a product or plan is created.
+  - type: com.razorpay.v1.item.updated
+    description: Occurs when a product or plan is updated.
+  - type: com.razorpay.v1.item.deleted
+    description: Occurs when a product or plan is deleted.

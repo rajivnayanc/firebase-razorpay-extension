@@ -7,3 +7,5 @@ firebase-debug.log
 .env
 .env.*
 
+*.log
+

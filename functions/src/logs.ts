@@ -10,6 +10,10 @@ export const logs = {
         logger.info('Initializing extension with configuration');
     },
 
+    info: (message: string) => {
+        logger.info(message);
+    },
+
     startWebhook: (eventType: string) => {
         logger.info(`Started processing Razorpay webhook for event: ${eventType}`);
     },
@@ -30,7 +34,11 @@ export const logs = {
         logger.info(`Successfully created Razorpay subscription ${subId} for ${docPath}`);
     },
 
-    error: (err: Error) => {
-        logger.error('Error occurred:', err);
+    error: (message: string | Error, err?: unknown) => {
+        if (err) {
+            logger.error(message, err);
+        } else {
+            logger.error(message);
+        }
     }
 };

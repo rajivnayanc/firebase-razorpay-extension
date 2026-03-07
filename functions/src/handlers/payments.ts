@@ -1,3 +1,4 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import config from '../config';
 import { logs } from '../logs';
@@ -63,16 +64,16 @@ export const handlePaymentEvent = async (event: any) => {
                 status: newStatus,
                 _razorpay_event: event.event,
                 _last_event_id: eventId,
-                updated_at: admin.firestore.FieldValue.serverTimestamp(),
+                updated_at: FieldValue.serverTimestamp(),
             };
 
             if (paymentEntity) {
-                dataToWrite.payment_id = paymentEntity.id;
+                dataToWrite.razorpay_payment_id = paymentEntity.id;
             }
 
             t.set(docRef, dataToWrite, { merge: true });
             t.set(dedupRef, {
-                processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                processedAt: FieldValue.serverTimestamp(),
                 event: event.event,
                 entityId: paymentEntity?.id || orderEntity?.id,
             });

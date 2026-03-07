@@ -1,0 +1,25 @@
+{
+    "functions": [
+        {
+            "source": ".",
+            "codebase": "default"
+        }
+    ],
+    "emulators": {
+        "functions": {
+            "port": 5001
+        },
+        "firestore": {
+            "port": 8080
+        },
+        "auth": {
+            "port": 9099
+        },
+        "ui": {
+            "enabled": false
+        }
+    },
+    "extensions": {
+        "razorpay-payments": "../"
+    }
+}

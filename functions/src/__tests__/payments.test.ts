@@ -54,7 +54,7 @@ describe('Webhook Handler: payments (with Transactions)', () => {
         expect(mockTransaction.set).toHaveBeenCalledTimes(2); // session + dedup
         expect(mockTransaction.set).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ status: 'paid', payment_id: 'pay_123' }),
+            expect.objectContaining({ status: 'paid', razorpay_payment_id: 'pay_123' }),
             { merge: true }
         );
     });

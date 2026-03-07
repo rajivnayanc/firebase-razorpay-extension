@@ -1,6 +1,6 @@
-import { onRequest } from 'firebase-functions/v2/https';
 import { createOrder } from './triggers/createOrder';
 import { createSubscription } from './triggers/createSubscription';
+import { onUserDeleted } from './triggers/onUserDeleted';
 import { logs } from './logs';
 
 import app from './api';
@@ -9,7 +9,11 @@ import app from './api';
 logs.init();
 
 // Export triggers
-export { createOrder, createSubscription };
+export { createOrder, createSubscription, onUserDeleted };
+
+import * as functions from 'firebase-functions';
 
 // Export the webhook handler and API
-export const razorpayWebhookHandler = onRequest({ secrets: [] }, app);
+export const razorpayWebhookHandler = functions.https.onRequest((req, res) => {
+    app(req, res);
+});
