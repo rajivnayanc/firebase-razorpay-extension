@@ -59,6 +59,7 @@ resources:
             value: (default)
           - attribute: document
             value: ${CUSTOMERS_COLLECTION}/{uid}/checkout_sessions/{id}
+            operator: match-path-pattern
 
   - name: createSubscription
     type: firebaseextensions.v1beta.v2function
@@ -76,6 +77,7 @@ resources:
             value: (default)
           - attribute: document
             value: ${CUSTOMERS_COLLECTION}/{uid}/subscriptions/{id}
+            operator: match-path-pattern
 
   - name: razorpayWebhookHandler
     type: firebaseextensions.v1beta.function

@@ -24,8 +24,10 @@ function getRazorpay() {
 
 
 export const createSubscriptionHandler = async (event: any) => {
-    // Only process if it matches the configured collection
-    if (event.params.customers_collection !== config.customersCollectionPath) return;
+    // When deployed as an extension, the trigger path is resolved by extension.yaml
+    // and the `{customers_collection}` wildcard is replaced with the actual collection name.
+    // In that case, `event.params.customers_collection` will be undefined.
+    if (event.params.customers_collection && event.params.customers_collection !== config.customersCollectionPath) return;
 
     const snap = event.data;
     if (!snap) {

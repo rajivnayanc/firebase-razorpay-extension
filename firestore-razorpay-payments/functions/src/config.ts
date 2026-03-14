@@ -2,20 +2,20 @@ import { getEventarc } from 'firebase-admin/eventarc';
 
 export default {
     // Extension parameters
-    razorpayKeyId: process.env.RAZORPAY_KEY_ID || '',
-    razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
-    razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+    get razorpayKeyId() { return process.env.RAZORPAY_KEY_ID || ''; },
+    get razorpayKeySecret() { return process.env.RAZORPAY_KEY_SECRET || ''; },
+    get razorpayWebhookSecret() { return process.env.RAZORPAY_WEBHOOK_SECRET || ''; },
 
     // Firestore paths
-    customersCollectionPath: process.env.CUSTOMERS_COLLECTION || 'customers',
-    productsCollectionPath: process.env.PRODUCTS_COLLECTION || 'products',
+    get customersCollectionPath() { return process.env.CUSTOMERS_COLLECTION || 'customers'; },
+    get productsCollectionPath() { return process.env.PRODUCTS_COLLECTION || 'products'; },
 
     // CORS: comma-separated list of allowed origins for authenticated endpoints
     // Leave empty to allow all origins (not recommended for production)
-    allowedOrigins: process.env.ALLOWED_ORIGINS || '',
+    get allowedOrigins() { return process.env.ALLOWED_ORIGINS || ''; },
 
     // Dedup event TTL in days (events older than this are eligible for cleanup)
-    dedupTtlDays: parseInt(process.env.DEDUP_TTL_DAYS || '7', 10),
+    get dedupTtlDays() { return parseInt(process.env.DEDUP_TTL_DAYS || '7', 10); },
 };
 
 /**

@@ -595,14 +595,14 @@ describe('Integration: onUserDeleted Lifecycle', () => {
             .doc(uid)
             .collection('subscriptions')
             .doc('sub_active_1')
-            .set({ plan_id: 'plan_1', status: 'active', notes: { firebaseRole: 'premium' } });
+            .set({ subscription_id: 'sub_rzp_1', plan_id: 'plan_1', status: 'active', notes: { firebaseRole: 'premium' } });
 
         await db
             .collection('customers')
             .doc(uid)
             .collection('subscriptions')
             .doc('sub_active_2')
-            .set({ plan_id: 'plan_2', status: 'authenticated', notes: { firebaseRole: 'admin' } });
+            .set({ subscription_id: 'sub_rzp_2', plan_id: 'plan_2', status: 'authenticated', notes: { firebaseRole: 'admin' } });
 
         // Wait for writes to settle before triggering delete
         await wait(2000);
