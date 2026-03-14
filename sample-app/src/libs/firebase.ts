@@ -3,11 +3,12 @@ import { getAuth, connectAuthEmulator } from "firebase/auth";
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 
 const firebaseConfig = {
-    // Dummy config - replace with real config if testing against production
+    // When using Firebase Emulators with a demo- project, the config values
+    // don't need to be real. The emulator intercepts all calls locally.
     apiKey: "fake-api-key",
-    authDomain: "demo-project.firebaseapp.com",
-    projectId: "demo-project",
-    storageBucket: "demo-project.appspot.com",
+    authDomain: "demo-test.firebaseapp.com",
+    projectId: "demo-test",
+    storageBucket: "demo-test.appspot.com",
     messagingSenderId: "123456789",
     appId: "1:123456789:web:abcdef123456"
 };

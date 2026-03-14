@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 
 # Build the functions
 echo "Building functions..."
-cd ../functions
+cd functions
 npm run build
 
 # Run unit tests

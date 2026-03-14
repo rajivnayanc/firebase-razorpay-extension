@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Razorpay Firebase Extension — Sample App
 
-## Getting Started
+A [Next.js](https://nextjs.org) app demonstrating the **firestore-razorpay-payments** Firebase Extension.
 
-First, run the development server:
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) ≥ 18
+- [Firebase CLI](https://firebase.google.com/docs/cli) (`npm i -g firebase-tools`)
+- Java Runtime ≥ 11 (required by Firebase Emulators)
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# 1. Install extension function dependencies
+cd ../firestore-razorpay-payments/functions
+npm install
+npm run build
+cd ../../sample-app
+
+# 2. Install sample-app dependencies
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Running Locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+You need **two terminals**:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Terminal 1 — Firebase Emulators** (from `sample-app/`):
+```bash
+firebase emulators:start --project demo-test
+```
 
-## Learn More
+This starts Auth, Firestore, and Functions emulators and loads the Razorpay extension.
 
-To learn more about Next.js, take a look at the following resources:
+**Terminal 2 — Next.js Dev Server** (from `sample-app/`):
+```bash
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000) to see the app.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## How It Works
 
-## Deploy on Vercel
+1. Click **Sign In Anonymously** — uses the Auth emulator.
+2. Click **Pay ₹500.00** — creates a `checkout_sessions` doc in Firestore.
+3. The extension's `createOrder` Cloud Function triggers and creates a Razorpay order.
+4. The Razorpay checkout modal opens for the user to complete payment.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Configuration
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Extension parameters are in `extensions/razorpay-payments.env.local`. Update these with your Razorpay test keys for real API testing.

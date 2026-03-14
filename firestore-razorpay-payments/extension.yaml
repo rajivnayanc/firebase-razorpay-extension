@@ -50,7 +50,7 @@ resources:
       is created. Uses Firestore transactions for idempotency.
     properties:
       buildConfig:
-        runtime: nodejs20
+        runtime: nodejs22
       location: ${LOCATION}
       eventTrigger:
         eventType: google.cloud.firestore.document.v1.created
@@ -67,7 +67,7 @@ resources:
       document is created. Uses Firestore transactions for idempotency.
     properties:
       buildConfig:
-        runtime: nodejs20
+        runtime: nodejs22
       location: ${LOCATION}
       eventTrigger:
         eventType: google.cloud.firestore.document.v1.created
@@ -84,9 +84,9 @@ resources:
       and product state back to Firestore with idempotent processing.
     properties:
       buildConfig:
-        runtime: nodejs20
+        runtime: nodejs22
       location: ${LOCATION}
-      httpsTrigger: true
+      httpsTrigger: {}
 
   - name: onUserDeleted
     type: firebaseextensions.v1beta.function
@@ -95,7 +95,7 @@ resources:
       when a user is deleted from Firebase Authentication.
     properties:
       buildConfig:
-        runtime: nodejs20
+        runtime: nodejs22
       location: ${LOCATION}
       eventTrigger:
         eventType: providers/cloud.firestore/eventTypes/document.delete
