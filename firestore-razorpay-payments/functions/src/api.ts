@@ -7,7 +7,7 @@ import { logs } from './logs';
 import { handleSubscriptionEvent } from './handlers/subscriptions';
 import { handlePaymentEvent } from './handlers/payments';
 
-const eventChannel = getEventChannel();
+// eventChannel is retrieved inside the handler to support lazy initialization and testability
 
 // Lazy-init Razorpay: secrets aren't available at module load time
 let razorpay: InstanceType<typeof Razorpay>;
@@ -71,6 +71,7 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         }
 
         // Publish to Eventarc channel if configured
+        const eventChannel = getEventChannel();
         if (eventChannel) {
             await eventChannel.publish({
                 type: `com.razorpay.v1.${event.event}`,

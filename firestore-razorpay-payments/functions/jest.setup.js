@@ -14,7 +14,7 @@ jest.mock('firebase-functions/v2/firestore', () => ({
     onDocumentDeleted: jest.fn(),
 }));
 
-jest.mock('firebase-functions', () => ({
+const functionsMock = {
     logger: {
         info: jest.fn(),
         error: jest.fn(),
@@ -23,6 +23,16 @@ jest.mock('firebase-functions', () => ({
     },
     https: {
         onRequest: jest.fn(),
+        onCall: jest.fn((handler) => ({
+            run: handler
+        })),
+        HttpsError: class HttpsError extends Error {
+            constructor(code, message, details) {
+                super(message);
+                this.code = code;
+                this.details = details;
+            }
+        }
     },
     firestore: {
         document: jest.fn().mockReturnValue({
@@ -32,4 +42,7 @@ jest.mock('firebase-functions', () => ({
             onCreate: jest.fn()
         })
     }
-}));
+};
+
+jest.mock('firebase-functions', () => functionsMock);
+jest.mock('firebase-functions/v1', () => functionsMock);

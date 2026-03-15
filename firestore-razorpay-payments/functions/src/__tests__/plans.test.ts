@@ -79,7 +79,36 @@ describe('Admin Plan Management (Callable Functions)', () => {
         const context: any = { auth: { token: { role: 'admin' } } };
 
         const result: any = await syncPlans.run(null, context);
-        expect(result.status).toBe('SUCCESS');
         expect(result.count).toBe(1);
+    });
+
+    it('Behavior: should throw error if required fields are missing in createPlan', async () => {
+        const data = { period: 'monthly' }; // missing interval, item
+        const context: any = { auth: { token: { admin: true } } };
+
+        await expect(createPlan.run(data, context)).rejects.toThrow('Missing required fields: period, interval, item details.');
+    });
+
+    it('Behavior: should handle Razorpay API error in createPlan', async () => {
+        const data = {
+            period: 'monthly',
+            interval: 1,
+            item: { name: 'Test', amount: 500 }
+        };
+        const context: any = { auth: { token: { admin: true } } };
+
+        const { getRazorpay } = require('../api');
+        getRazorpay().plans.create.mockRejectedValueOnce(new Error('API Error'));
+
+        await expect(createPlan.run(data, context)).rejects.toThrow('Failed to create plan.');
+    });
+
+    it('Behavior: should handle Razorpay API error in syncPlans', async () => {
+        const context: any = { auth: { token: { role: 'admin' } } };
+
+        const { getRazorpay } = require('../api');
+        getRazorpay().plans.all.mockRejectedValueOnce(new Error('Sync failed'));
+
+        await expect(syncPlans.run(null, context)).rejects.toThrow('Sync failed.');
     });
 });

@@ -9,3 +9,5 @@ firebase-debug.log
 
 *.log
 
+# testing
+/coverage

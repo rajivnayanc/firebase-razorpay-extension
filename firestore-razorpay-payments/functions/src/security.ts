@@ -1,4 +1,4 @@
-import * as crypto from 'crypto';
+import Razorpay from 'razorpay';
 import config from './config';
 
 export const verifyWebhookSignature = (
@@ -7,17 +7,9 @@ export const verifyWebhookSignature = (
 ): boolean => {
     if (!signature || !payload) return false;
 
-    try {
-        const expectedSignature = crypto
-            .createHmac('sha256', config.razorpayWebhookSecret)
-            .update(payload)
-            .digest('hex');
-
-        return crypto.timingSafeEqual(
-            Buffer.from(expectedSignature),
-            Buffer.from(signature)
-        );
-    } catch (error) {
-        return false;
-    }
+    return Razorpay.validateWebhookSignature(
+        payload,
+        signature,
+        config.razorpayWebhookSecret
+    );
 };

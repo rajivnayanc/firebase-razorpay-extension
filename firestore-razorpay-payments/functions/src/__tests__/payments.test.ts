@@ -88,5 +88,89 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
         expect(admin.firestore().set).not.toHaveBeenCalled();
     });
 
+    it('Behavior: should return early if both payment and order IDs are missing', async () => {
+        const mockEvent = {
+            id: 'evt_missing_ids',
+            event: 'payment.captured',
+            payload: { payment: {}, order: {} }
+        };
 
+        await handlePaymentEvent(mockEvent as any);
+        const admin = require('firebase-admin');
+        expect(admin.firestore().set).not.toHaveBeenCalled();
+    });
+
+    it('Behavior: should handle failure to fetch entity from Razorpay API', async () => {
+        const razorpayApi = getRazorpay();
+        (razorpayApi.payments.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
+
+        const mockEvent = {
+            id: 'evt_api_fail',
+            event: 'payment.captured',
+            payload: { payment: { entity: { id: 'pay_123' } } }
+        };
+
+        await handlePaymentEvent(mockEvent as any);
+        const admin = require('firebase-admin');
+        expect(admin.firestore().set).not.toHaveBeenCalled();
+    });
+
+    it('Behavior: should handle entity resolution failure (null returned)', async () => {
+        const razorpayApi = getRazorpay();
+        (razorpayApi.payments.fetch as jest.Mock).mockResolvedValueOnce(null);
+
+        const mockEvent = {
+            id: 'evt_null_entity',
+            event: 'payment.captured',
+            payload: { payment: { entity: { id: 'pay_123' } } }
+        };
+
+        await handlePaymentEvent(mockEvent as any);
+        const admin = require('firebase-admin');
+        expect(admin.firestore().set).not.toHaveBeenCalled();
+    });
+
+    it('Behavior: should map payment status failed to failed', async () => {
+        const razorpayApi = getRazorpay();
+        (razorpayApi.payments.fetch as jest.Mock).mockResolvedValueOnce({
+            id: 'pay_fail',
+            status: 'failed',
+            notes: { uid: 'user_123', sessionId: 'session_123' }
+        });
+
+        const mockEvent = {
+            id: 'evt_fail',
+            event: 'payment.failed',
+            payload: { payment: { entity: { id: 'pay_fail' } } }
+        };
+
+        await handlePaymentEvent(mockEvent as any);
+        const admin = require('firebase-admin');
+        expect(admin.firestore().set).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'failed' }),
+            { merge: true }
+        );
+    });
+
+    it('Behavior: should resolve via order ID and map status paid to paid', async () => {
+        const razorpayApi = getRazorpay();
+        (razorpayApi.orders.fetch as jest.Mock).mockResolvedValueOnce({
+            id: 'order_paid',
+            status: 'paid',
+            notes: { uid: 'user_123', sessionId: 'session_123' }
+        });
+
+        const mockEvent = {
+            id: 'evt_order_paid',
+            event: 'order.paid',
+            payload: { order: { entity: { id: 'order_paid' } } }
+        };
+
+        await handlePaymentEvent(mockEvent as any);
+        const admin = require('firebase-admin');
+        expect(admin.firestore().set).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'paid', order_id: 'order_paid' }),
+            { merge: true }
+        );
+    });
 });
