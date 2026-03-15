@@ -8,10 +8,12 @@
         "strict": true,
         "target": "es2017",
         "esModuleInterop": true,
-        "resolveJsonModule": true
+        "resolveJsonModule": true,
+        "types": ["jest", "node"]
     },
     "compileOnSave": true,
     "include": [
-        "src"
+        "src",
+        "integration-tests"
     ]
 }

@@ -1,16 +1,12 @@
 import { createSubscriptionHandler } from '../triggers/createSubscription';
 
-const mockTransaction = {
-    get: jest.fn(),
-    update: jest.fn(),
-};
 
 jest.mock('firebase-admin', () => {
     const firestoreMock = {
         collection: jest.fn().mockReturnThis(),
         doc: jest.fn().mockReturnThis(),
         set: jest.fn().mockResolvedValue({}),
-        runTransaction: jest.fn(async (fn: any) => fn(mockTransaction)),
+        runTransaction: jest.fn(async (fn: any) => fn()),
     };
     return {
         apps: [],
@@ -37,7 +33,7 @@ jest.mock('razorpay', () => {
     }));
 });
 
-describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => {
+describe('Firestore Trigger: createSubscription', () => {
     let mockSnap: any;
 
     beforeEach(() => {
@@ -48,16 +44,19 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
                 update: jest.fn().mockResolvedValue({})
             }
         };
-        mockTransaction.get.mockReset();
-        mockTransaction.update.mockReset();
         jest.clearAllMocks();
     });
 
-    it('Behavior: should acquire transaction lock then create subscription', async () => {
-        mockTransaction.get
-            .mockResolvedValueOnce({ exists: true, data: () => ({ plan_id: 'plan_123' }) }) // 1. Sub Doc
-            .mockResolvedValueOnce({ exists: true, data: () => ({}) }); // 2. Plan Doc
-
+    it('Behavior: should create subscription', async () => {
+        // We need to properly mock the firestore db.collection().doc().get() return because createSubscription queries the plan.
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({}) });
+        const firestoreMock = {
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+        };
+        require('firebase-admin').firestore.mockImplementation(() => firestoreMock);
+        
         const mockEvent = {
             data: mockSnap,
             params: { customers_collection: 'customers', uid: 'user1', id: 'sub1' }
@@ -65,9 +64,8 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
 
         await createSubscriptionHandler(mockEvent as any);
 
-        // Verify transaction acquired the lock
-        expect(mockTransaction.update).toHaveBeenCalledWith(
-            expect.anything(),
+        // Verify lock acquired
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({ status: 'processing' })
         );
 
@@ -79,9 +77,7 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
     });
 
     it('Behavior: should SKIP if already processing (prevents double subscription)', async () => {
-        mockTransaction.get
-            .mockResolvedValueOnce({ exists: true, data: () => ({ plan_id: 'plan_123', status: 'processing', processing_at: { toDate: () => new Date() } }) })
-            .mockResolvedValueOnce({ exists: true, data: () => ({}) });
+        mockSnap.data = () => ({ plan_id: 'plan_123', status: 'processing', processing_at: { toDate: () => new Date() } });
 
         const mockEvent = {
             data: mockSnap,
@@ -90,13 +86,17 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
 
         await createSubscriptionHandler(mockEvent as any);
 
-        expect(mockTransaction.update).not.toHaveBeenCalled();
         expect(mockSnap.ref.update).not.toHaveBeenCalled();
     });
 
     it('Behavior: should REJECT missing plan_id (server-side validation)', async () => {
-        mockTransaction.get
-            .mockResolvedValueOnce({ exists: true, data: () => ({ amount: 500 }) }); // Fails immediately, won't fetch plan doc
+        mockSnap.data = () => ({ amount: 500 }); // Fails immediately, won't fetch plan doc
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 500 }) });
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+        }));
 
         const mockEvent = {
             data: mockSnap,
@@ -105,8 +105,7 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
 
         await createSubscriptionHandler(mockEvent as any);
 
-        expect(mockTransaction.update).toHaveBeenCalledWith(
-            expect.anything(),
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: 'failed',
                 error: expect.stringContaining('plan_id')
@@ -115,9 +114,12 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
     });
 
     it('Behavior: should REJECT if plan_id does not exist in synced plans', async () => {
-        mockTransaction.get
-            .mockResolvedValueOnce({ exists: true, data: () => ({ plan_id: 'plan_123' }) }) // 1. Sub Doc
-            .mockResolvedValueOnce({ exists: false, data: () => ({}) }); // 2. Plan Doc (Doesn't exist)
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: false }); // Plan Doc (Doesn't exist)
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+        }));
 
         const mockEvent = {
             data: mockSnap,
@@ -126,8 +128,7 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
 
         await createSubscriptionHandler(mockEvent as any);
 
-        expect(mockTransaction.update).toHaveBeenCalledWith(
-            expect.anything(),
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: 'failed',
                 error: expect.stringContaining('not found in synced plans')

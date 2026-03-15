@@ -1,21 +1,13 @@
-import request from 'supertest';
-import app from '../api';
 import * as crypto from 'crypto';
+import { webhookHandlerFunc } from '../api';
 
 // Mock the whole firebase-admin module to avoid initializing it
 jest.mock('firebase-admin', () => {
-    const mockTransaction = {
-        get: jest.fn().mockResolvedValue({
-            exists: true,
-            data: () => ({ status: 'created', order_id: 'order_123' })
-        }),
-        set: jest.fn(),
-    };
     const firestoreMock = {
         collection: jest.fn().mockReturnThis(),
         doc: jest.fn().mockReturnThis(),
         set: jest.fn().mockResolvedValue({}),
-        runTransaction: jest.fn(async (fn: any) => fn(mockTransaction)),
+        runTransaction: jest.fn(async (fn: any) => fn()),
     };
     return {
         firestore: Object.assign(jest.fn(() => firestoreMock), {
@@ -53,68 +45,39 @@ describe('Webhook API', () => {
     const signature = crypto.createHmac('sha256', 'test_webhook_secret').update(payloadStr).digest('hex');
 
     it('Behavior: should reject requests with invalid signature', async () => {
-        const res = await request(app)
-            .post('/webhook')
-            .set('x-razorpay-signature', 'invalid')
-            .send(payload);
+        const req: any = {
+            method: 'POST',
+            body: payload,
+            rawBody: Buffer.from(payloadStr),
+            headers: { 'x-razorpay-signature': 'invalid' }
+        };
+        const res: any = {
+            status: jest.fn().mockReturnThis(),
+            send: jest.fn(),
+            json: jest.fn(),
+        };
 
-        expect(res.status).toBe(400);
-        expect(res.text).toContain('Invalid Signature');
+        await webhookHandlerFunc(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Invalid Signature' }));
     });
 
     it('Behavior: should accept valid signatures and process webhook', async () => {
-        const res = await request(app)
-            .post('/webhook')
-            .set('x-razorpay-signature', signature)
-            .set('Content-Type', 'application/json')
-            .send(payloadStr);
+        const req: any = {
+            method: 'POST',
+            body: payload,
+            rawBody: Buffer.from(payloadStr),
+            headers: { 'x-razorpay-signature': signature }
+        };
+        const res: any = {
+            status: jest.fn().mockReturnThis(),
+            send: jest.fn(),
+        };
 
-        expect(res.status).toBe(200);
-        expect(res.text).toBe('Webhook Processed');
-    });
-});
+        await webhookHandlerFunc(req, res);
 
-describe('Verify Payment Synchronous API', () => {
-    it('Behavior: should reject requests without a valid auth token', async () => {
-        const res = await request(app)
-            .post('/verify-payment')
-            .send({});
-
-        expect(res.status).toBe(403);
-    });
-
-    it('Behavior: should accept valid verification payloads and sync session', async () => {
-        const res = await request(app)
-            .post('/verify-payment')
-            .set('Authorization', 'Bearer dummy_token')
-            .send({
-                razorpay_order_id: 'order_123',
-                sessionId: 'session_123'
-            });
-
-        expect(res.status).toBe(200);
-        expect(res.body.status).toBe('PASSED');
-        const razorpayInstance = require('../api').getRazorpay();
-        expect(razorpayInstance.orders.fetch).toHaveBeenCalledWith('order_123');
-    });
-
-    it('Behavior: should strictly reject mismatching order ownership', async () => {
-        const razorpayInstance = require('../api').getRazorpay();
-        (razorpayInstance.orders.fetch as jest.Mock).mockResolvedValueOnce({
-            id: 'order_123',
-            status: 'paid',
-            notes: { uid: 'different_user', sessionId: 'session_123' } // Mismatch ownership
-        });
-
-        const res = await request(app)
-            .post('/verify-payment')
-            .set('Authorization', 'Bearer dummy_token')
-            .send({
-                razorpay_order_id: 'order_123',
-                sessionId: 'session_123'
-            });
-
-        expect(res.status).toBe(400);
-        expect(res.body.status).toBe('FAILED');
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.send).toHaveBeenCalledWith('Webhook Processed');
     });
 });

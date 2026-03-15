@@ -1,19 +1,30 @@
 import { createOrder } from './triggers/createOrder';
 import { createSubscription } from './triggers/createSubscription';
-import { onUserDeleted } from './triggers/onUserDeleted';
-import { logs } from './logs';
+import { createCustomer } from './triggers/createCustomer';
+import { onUserDeleted, onCustomerDataDeleted } from './triggers/onUserDeleted';
+import { razorpayWebhookHandler } from './api';
+import { createPlan, syncPlans } from './admin';
 
-import app from './api';
+import { logs } from './logs';
 
 // Initialize logging
 logs.init();
 
-// Export triggers
-export { createOrder, createSubscription, onUserDeleted };
+// Export all Extension functions
+export {
+    // Session Triggers
+    createOrder,
+    createSubscription,
 
-import * as functions from 'firebase-functions';
+    // Auth and Lifecycle Triggers
+    createCustomer,
+    onUserDeleted,
+    onCustomerDataDeleted,
 
-// Export the webhook handler and API
-export const razorpayWebhookHandler = functions.https.onRequest((req, res) => {
-    app(req, res);
-});
+    // Webhooks
+    razorpayWebhookHandler,
+
+    // Admin Calls
+    createPlan,
+    syncPlans
+};

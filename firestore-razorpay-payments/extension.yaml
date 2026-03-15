@@ -43,11 +43,23 @@ roles:
       subscriptions and clean up on user deletion.
 
 resources:
+  - name: createCustomer
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Creates a Razorpay customer object when a new user signs up in Firebase Authentication.
+    properties:
+      buildConfig:
+        runtime: nodejs22
+      location: ${LOCATION}
+      eventTrigger:
+        eventType: providers/firebase.auth/eventTypes/user.create
+        resource: projects/${PROJECT_ID}
+
   - name: createOrder
     type: firebaseextensions.v1beta.v2function
     description: >-
       Creates a Razorpay Order when a Firestore checkout_session document
-      is created. Uses Firestore transactions for idempotency.
+      is created.
     properties:
       buildConfig:
         runtime: nodejs22
@@ -65,7 +77,7 @@ resources:
     type: firebaseextensions.v1beta.v2function
     description: >-
       Creates a Razorpay Subscription when a Firestore subscriptions
-      document is created. Uses Firestore transactions for idempotency.
+      document is created.
     properties:
       buildConfig:
         runtime: nodejs22
@@ -90,11 +102,44 @@ resources:
       location: ${LOCATION}
       httpsTrigger: {}
 
+  - name: createPlan
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Firebase Callable function secured by Auth to create a Plan in Razorpay.
+    properties:
+      buildConfig:
+        runtime: nodejs22
+      location: ${LOCATION}
+      httpsTrigger: {}
+
+  - name: syncPlans
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Firebase Callable function secured by Auth to sync all Plans from Razorpay into Firestore.
+    properties:
+      buildConfig:
+        runtime: nodejs22
+      location: ${LOCATION}
+      httpsTrigger: {}
+
   - name: onUserDeleted
     type: firebaseextensions.v1beta.function
     description: >-
-      Cleans up Razorpay subscription data and removes custom claims
-      when a user is deleted from Firebase Authentication.
+      Deletes the Razorpay customer object and cancels subscriptions when a user
+      is deleted from Firebase Authentication.
+    properties:
+      buildConfig:
+        runtime: nodejs22
+      location: ${LOCATION}
+      eventTrigger:
+        eventType: providers/firebase.auth/eventTypes/user.delete
+        resource: projects/${PROJECT_ID}
+
+  - name: onCustomerDataDeleted
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Deletes the Razorpay customer object and cancels subscriptions when the
+      customer document in Cloud Firestore is deleted.
     properties:
       buildConfig:
         runtime: nodejs22
@@ -192,16 +237,6 @@ params:
       separated by slashes, e.g. "path/to/collection".
     required: true
 
-  - param: ALLOWED_ORIGINS
-    label: Allowed CORS Origins
-    description: >-
-      Comma-separated list of allowed origins for client-facing API
-      endpoints (verify-payment, verify-order). Leave empty to allow
-      all origins (not recommended for production).
-    type: string
-    example: https://myapp.web.app,https://myapp.firebaseapp.com
-    default: ""
-    required: false
 
 events:
   - type: com.razorpay.v1.order.paid

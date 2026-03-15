@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../api';
+import { createPlan, syncPlans } from '../admin';
 
 let mockCustomClaims = {};
 
@@ -42,76 +41,45 @@ jest.mock('razorpay', () => {
     }));
 });
 
-describe('Plan API Endpoints', () => {
+describe('Admin Plan Management (Callable Functions)', () => {
     beforeEach(() => {
         mockCustomClaims = {};
     });
 
-    describe('GET /plans', () => {
-        it('Behavior: should allow authenticated users to fetch plans', async () => {
-            const res = await request(app)
-                .get('/plans')
-                .set('Authorization', 'Bearer dummy_token');
+    it('Behavior: should reject createPlan without admin claim', async () => {
+        const data = {
+            period: 'monthly',
+            interval: 1,
+            item: { name: 'Test', amount: 500 }
+        };
+        const context: any = { auth: { token: { admin: false } } };
 
-            expect(res.status).toBe(200);
-            expect(res.body.items).toBeDefined();
-            expect(res.body.items.length).toBe(1);
-            expect(res.body.items[0].id).toBe('plan_1');
-        });
-
-        it('Behavior: should reject unauthenticated requests', async () => {
-            const res = await request(app).get('/plans');
-            expect(res.status).toBe(403);
-        });
+        await expect(createPlan.run(data, context)).rejects.toThrow('Must be an administrative user to initiate plan creation.');
     });
 
-    describe('Admin Plan Management', () => {
-        it('Behavior: should reject POST /admin/plans without admin claim', async () => {
-            const res = await request(app)
-                .post('/admin/plans')
-                .set('Authorization', 'Bearer dummy_token')
-                .send({
-                    period: 'monthly',
-                    interval: 1,
-                    item: { name: 'Test', amount: 500 }
-                });
+    it('Behavior: should allow createPlan with admin claim', async () => {
+        const data = {
+            period: 'monthly',
+            interval: 1,
+            item: { name: 'Test Plan', amount: 50000, currency: 'INR' }
+        };
+        const context: any = { auth: { token: { admin: true } } };
 
-            expect(res.status).toBe(403);
-            expect(res.body.error).toContain('Admin access required');
-        });
+        const result: any = await createPlan.run(data, context);
+        expect(result.id).toBe('plan_new123');
+    });
 
-        it('Behavior: should allow POST /admin/plans with admin claim', async () => {
-            mockCustomClaims = { admin: true };
-            const res = await request(app)
-                .post('/admin/plans')
-                .set('Authorization', 'Bearer valid_admin_token')
-                .send({
-                    period: 'monthly',
-                    interval: 1,
-                    item: { name: 'Test Plan', amount: 50000, currency: 'INR' }
-                });
+    it('Behavior: should reject syncPlans without admin claim', async () => {
+        const context: any = { auth: { token: { role: 'user' } } };
 
-            expect(res.status).toBe(201);
-            expect(res.body.id).toBe('plan_new123');
-        });
+        await expect(syncPlans.run(null, context)).rejects.toThrow('Must be an administrative user to initiate plan sync.');
+    });
 
-        it('Behavior: should reject POST /admin/plans/sync without admin claim', async () => {
-            const res = await request(app)
-                .post('/admin/plans/sync')
-                .set('Authorization', 'Bearer dummy_token');
+    it('Behavior: should allow syncPlans with admin claim', async () => {
+        const context: any = { auth: { token: { role: 'admin' } } };
 
-            expect(res.status).toBe(403);
-        });
-
-        it('Behavior: should allow POST /admin/plans/sync with admin claim', async () => {
-            mockCustomClaims = { admin: true };
-            const res = await request(app)
-                .post('/admin/plans/sync')
-                .set('Authorization', 'Bearer valid_admin_token');
-
-            expect(res.status).toBe(200);
-            expect(res.body.status).toBe('SUCCESS');
-            expect(res.body.count).toBe(1);
-        });
+        const result: any = await syncPlans.run(null, context);
+        expect(result.status).toBe('SUCCESS');
+        expect(result.count).toBe(1);
     });
 });

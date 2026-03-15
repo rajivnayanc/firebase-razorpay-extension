@@ -1,9 +1,6 @@
 import { createOrderHandler } from '../triggers/createOrder';
 
-const mockTransaction = {
-    get: jest.fn(),
-    update: jest.fn(),
-};
+
 
 // Mock firebase admin
 jest.mock('firebase-admin', () => {
@@ -11,7 +8,7 @@ jest.mock('firebase-admin', () => {
         collection: jest.fn().mockReturnThis(),
         doc: jest.fn().mockReturnThis(),
         set: jest.fn().mockResolvedValue({}),
-        runTransaction: jest.fn(async (fn: any) => fn(mockTransaction)),
+        runTransaction: jest.fn(async (fn: any) => fn()), // Simplified
     };
     return {
         apps: [],
@@ -49,12 +46,7 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
         jest.clearAllMocks();
     });
 
-    it('Behavior: should acquire transaction lock then create order', async () => {
-        // Transaction read: document has no status yet
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ amount: 50000 }),
-        });
-
+    it('Behavior: should acquire lock then create order', async () => {
         const mockEvent = {
             data: mockSnap,
             params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
@@ -62,13 +54,12 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
         await createOrderHandler(mockEvent as any);
 
-        // Verify transaction acquired the lock
-        expect(mockTransaction.update).toHaveBeenCalledWith(
-            expect.anything(),
+        // Verify lock was acquired
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({ status: 'processing' })
         );
 
-        // Verify order was created and doc was updated
+        // Verify order was created and doc was updated (second update call)
         expect(mockSnap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
             order_id: 'order_123',
             status: 'created'
@@ -76,9 +67,10 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
     });
 
     it('Behavior: should SKIP if document is already processing (prevents double order)', async () => {
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ amount: 50000, status: 'processing', processing_at: { toDate: () => new Date() } }), // Already locked recently!
-        });
+        mockSnap = {
+            data: () => ({ amount: 50000, status: 'processing', processing_at: { toDate: () => new Date() } }),
+            ref: mockSnap.ref
+        };
 
         const mockEvent = {
             data: mockSnap,
@@ -87,15 +79,14 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
         await createOrderHandler(mockEvent as any);
 
-        // Transaction should NOT update — another trigger already has the lock
-        expect(mockTransaction.update).not.toHaveBeenCalled();
         expect(mockSnap.ref.update).not.toHaveBeenCalled();
     });
 
     it('Behavior: should SKIP if document already has paid status', async () => {
-        mockTransaction.get.mockResolvedValue({
+        mockSnap = {
             data: () => ({ amount: 50000, status: 'paid', order_id: 'order_existing' }),
-        });
+            ref: mockSnap.ref
+        };
 
         const mockEvent = {
             data: mockSnap,
@@ -104,14 +95,14 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
         await createOrderHandler(mockEvent as any);
 
-        expect(mockTransaction.update).not.toHaveBeenCalled();
         expect(mockSnap.ref.update).not.toHaveBeenCalled();
     });
 
     it('Behavior: should REJECT zero or negative amounts (server-side validation)', async () => {
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ amount: 0 }), // Invalid!
-        });
+        mockSnap = {
+            data: () => ({ amount: 0 }),
+            ref: mockSnap.ref
+        };
 
         const mockEvent = {
             data: mockSnap,
@@ -120,9 +111,8 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
         await createOrderHandler(mockEvent as any);
 
-        // Should set failed status inside the transaction
-        expect(mockTransaction.update).toHaveBeenCalledWith(
-            expect.anything(),
+        // Should set failed status
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: 'failed',
                 error: expect.stringContaining('Invalid amount')
@@ -131,9 +121,10 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
     });
 
     it('Behavior: should handle razorpay API errors gracefully', async () => {
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ amount: -100 }), // Negative amount will cause Razorpay error
-        });
+        mockSnap = {
+            data: () => ({ amount: -100 }),
+            ref: mockSnap.ref
+        };
 
         const mockEvent = {
             data: mockSnap,
@@ -142,9 +133,9 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
         await createOrderHandler(mockEvent as any);
 
-        // Should have set failed status
-        expect(mockTransaction.update).toHaveBeenCalledWith(
-            expect.anything(),
+        // Should have set failed status in response to Razorpay API Error
+        // The first update sets processing, the second sets failed.
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({ status: 'failed' })
         );
     });

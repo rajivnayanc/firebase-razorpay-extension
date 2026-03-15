@@ -1,5 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
+import { Orders } from 'razorpay/dist/types/orders';
+import { Payments } from 'razorpay/dist/types/payments';
 import config from '../config';
 import { logs } from '../logs';
 import { getRazorpay } from '../api';
@@ -14,7 +16,7 @@ export const handlePaymentEvent = async (event: any) => {
         return;
     }
 
-    let fetchedEntity: any = null;
+    let fetchedEntity: Orders.RazorpayOrder | Payments.RazorpayPayment | null = null;
     let isPayment = false;
 
     try {
@@ -43,8 +45,8 @@ export const handlePaymentEvent = async (event: any) => {
 
     // We rely on order properties being passed down via notes during createOrder
     const notes = fetchedEntity.notes;
-    const uid = notes?.uid;
-    const sessionId = notes?.sessionId;
+    const uid = notes?.uid ? String(notes.uid) : undefined;
+    const sessionId = notes?.sessionId ? String(notes.sessionId) : undefined;
 
     if (!uid || !sessionId) {
         // If there's no mapping to our Firestore structure, simply ignore

@@ -1,28 +1,15 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
-import Razorpay from 'razorpay';
+import { Orders } from 'razorpay/dist/types/orders';
 import config from '../config';
 import { logs } from '../logs';
+import { getRazorpay } from '../api';
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
     admin.initializeApp();
 }
-
-// Lazy-init Razorpay: secrets aren't available at module load time
-// (Cloud Secret Manager injects them only at function invocation)
-let razorpay: InstanceType<typeof Razorpay>;
-function getRazorpay() {
-    if (!razorpay) {
-        razorpay = new Razorpay({
-            key_id: config.razorpayKeyId,
-            key_secret: config.razorpayKeySecret,
-        });
-    }
-    return razorpay;
-}
-
 
 export const createOrderHandler = async (event: any) => {
     logs.info('createOrderHandler');
@@ -45,61 +32,43 @@ export const createOrderHandler = async (event: any) => {
         return;
     }
 
-    const db = admin.firestore();
+    // Server-side amount validation
+    if (!currentData.amount || currentData.amount <= 0) {
+        await snap.ref.update({
+            status: 'failed',
+            error: 'Invalid amount: must be a positive integer (in paise)',
+        });
+        return;
+    }
 
-    // Use Firestore Transaction to prevent TOCTOU race condition
-    let shouldCreateOrder = false;
-    let orderData: any = null;
+    // If order already created, paid, or has an order_id assigned, skip.
+    if (currentData.order_id || currentData.status === 'created' || currentData.status === 'paid') {
+        return;
+    }
+
+    if (currentData.status === 'processing') {
+        const processingAt = currentData.processing_at?.toDate();
+        if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
+            return; // Still processing normally
+        }
+    }
+
+    // Set processing
+    await snap.ref.update({
+        status: 'processing',
+        processing_at: FieldValue.serverTimestamp(),
+    });
 
     try {
-        await db.runTransaction(async (t) => {
-            const docSnapshot = await t.get(snap.ref as admin.firestore.DocumentReference);
-            const tData = docSnapshot.data();
-
-            // Guard: already has order or is in a non-initial state
-            if (!tData || tData.order_id || tData.status === 'created' || tData.status === 'paid') {
-                return;
-            }
-
-            // If processing, check if it's stuck (e.g., > 2 minutes)
-            if (tData.status === 'processing') {
-                const processingAt = tData.processing_at?.toDate();
-                if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
-                    return; // Still processing normally
-                }
-                logs.info(`Retrying stuck order creation for session ${event.params.id}`);
-            }
-
-            // Server-side amount validation
-            if (!tData.amount || tData.amount <= 0) {
-                t.update(snap.ref, {
-                    status: 'failed',
-                    error: 'Invalid amount: must be a positive integer (in paise)',
-                });
-                return;
-            }
-
-            // Acquire lock atomically
-            t.update(snap.ref, {
-                status: 'processing',
-                processing_at: FieldValue.serverTimestamp(),
-            });
-
-            shouldCreateOrder = true;
-            orderData = tData;
-        });
-
-        if (!shouldCreateOrder || !orderData) return;
-
         // Receipt-based duplicate check: use Firestore doc ID as receipt
         // If a previous attempt created an order with this receipt, reuse it
         const receipt = event.params.id;
-        let order: any;
+        let order: Orders.RazorpayOrder;
 
         try {
             const existingOrders = await getRazorpay().orders.all({ receipt });
             const matchingOrder = existingOrders?.items?.find(
-                (o: any) => o.receipt === receipt && (o.status === 'created' || o.status === 'paid')
+                (o: Orders.RazorpayOrder) => o.receipt === receipt && (o.status === 'created' || o.status === 'paid')
             );
 
             if (matchingOrder) {
@@ -108,9 +77,9 @@ export const createOrderHandler = async (event: any) => {
                 logs.orderCreated(order.id, `${snap.ref.path} (reused existing)`);
             } else {
                 // Create new Razorpay Order
-                const options = {
-                    amount: orderData.amount,
-                    currency: orderData.currency || 'INR',
+                const options: Orders.RazorpayOrderCreateRequestBody = {
+                    amount: currentData.amount,
+                    currency: currentData.currency || 'INR',
                     receipt,
                     notes: {
                         uid: event.params.uid,
@@ -123,9 +92,9 @@ export const createOrderHandler = async (event: any) => {
             }
         } catch (fetchError: any) {
             // If the receipt lookup fails, fall back to creating a new order
-            const options = {
-                amount: orderData.amount,
-                currency: orderData.currency || 'INR',
+            const options: Orders.RazorpayOrderCreateRequestBody = {
+                amount: currentData.amount,
+                currency: currentData.currency || 'INR',
                 receipt,
                 notes: {
                     uid: event.params.uid,
@@ -138,6 +107,7 @@ export const createOrderHandler = async (event: any) => {
         }
 
         await snap.ref.update({
+            ...order,
             order_id: order.id,
             status: 'created',
             created_at: FieldValue.serverTimestamp(),
