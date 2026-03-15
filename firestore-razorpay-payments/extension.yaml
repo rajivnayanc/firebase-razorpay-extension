@@ -214,9 +214,17 @@ events:
     description: Occurs when a subscription is activated.
   - type: com.razorpay.v1.subscription.cancelled
     description: Occurs when a subscription is cancelled.
-  - type: com.razorpay.v1.item.created
-    description: Occurs when a product or plan is created.
-  - type: com.razorpay.v1.item.updated
-    description: Occurs when a product or plan is updated.
-  - type: com.razorpay.v1.item.deleted
-    description: Occurs when a product or plan is deleted.
+  - type: com.razorpay.v1.subscription.authenticated
+    description: Occurs when a subscription is authenticated.
+  - type: com.razorpay.v1.subscription.completed
+    description: Occurs when a subscription is completed.
+  - type: com.razorpay.v1.subscription.pending
+    description: Occurs when a subscription is pending.
+  - type: com.razorpay.v1.subscription.halted
+    description: Occurs when a subscription is halted.
+  - type: com.razorpay.v1.subscription.paused
+    description: Occurs when a subscription is paused.
+  - type: com.razorpay.v1.subscription.resumed
+    description: Occurs when a subscription is resumed.
+  - type: com.razorpay.v1.subscription.updated
+    description: Occurs when a subscription is updated.

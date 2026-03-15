@@ -28,6 +28,18 @@ jest.mock('firebase-admin', () => {
     };
 });
 
+jest.mock('razorpay', () => {
+    return jest.fn().mockImplementation(() => ({
+        orders: {
+            fetch: jest.fn().mockResolvedValue({
+                id: 'order_123',
+                status: 'paid',
+                notes: { uid: 'mock_user_123', sessionId: 'session_123' }
+            })
+        }
+    }));
+});
+
 describe('Webhook API', () => {
     const payload = {
         event: 'payment.captured',
@@ -71,32 +83,34 @@ describe('Verify Payment Synchronous API', () => {
         expect(res.status).toBe(403);
     });
 
-    it('Behavior: should accept valid verification signatures', async () => {
-        const payloadStr = 'order_123' + '|' + 'pay_123';
-        const signature = crypto.createHmac('sha256', 'test_key_secret').update(payloadStr).digest('hex');
-
+    it('Behavior: should accept valid verification payloads and sync session', async () => {
         const res = await request(app)
             .post('/verify-payment')
             .set('Authorization', 'Bearer dummy_token')
             .send({
                 razorpay_order_id: 'order_123',
-                razorpay_payment_id: 'pay_123',
-                razorpay_signature: signature,
                 sessionId: 'session_123'
             });
 
         expect(res.status).toBe(200);
         expect(res.body.status).toBe('PASSED');
+        const razorpayInstance = require('../api').getRazorpay();
+        expect(razorpayInstance.orders.fetch).toHaveBeenCalledWith('order_123');
     });
 
-    it('Behavior: should strictly reject invalid verification signatures', async () => {
+    it('Behavior: should strictly reject mismatching order ownership', async () => {
+        const razorpayInstance = require('../api').getRazorpay();
+        (razorpayInstance.orders.fetch as jest.Mock).mockResolvedValueOnce({
+            id: 'order_123',
+            status: 'paid',
+            notes: { uid: 'different_user', sessionId: 'session_123' } // Mismatch ownership
+        });
+
         const res = await request(app)
             .post('/verify-payment')
             .set('Authorization', 'Bearer dummy_token')
             .send({
                 razorpay_order_id: 'order_123',
-                razorpay_payment_id: 'pay_123',
-                razorpay_signature: 'invalid_signature_attempt',
                 sessionId: 'session_123'
             });
 

@@ -2,27 +2,17 @@ import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import config from '../config';
 import { logs } from '../logs';
-import { isValidSubscriptionTransition, isTerminalSubscriptionStatus } from '../stateMachine';
+import { getRazorpay } from '../api';
 
 /**
- * Serialize custom claims updates per user using a Firestore document lock.
- * This prevents race conditions when two subscription events try to modify
- * claims for the same user simultaneously.
+ * Manage custom claims updates sequentially.
  */
-async function updateCustomClaimsWithLock(
-    db: admin.firestore.Firestore,
+async function manageCustomClaims(
     uid: string,
     operation: 'set' | 'remove',
     role: string
 ): Promise<void> {
-    const lockRef = db.collection('_razorpay_claims_locks').doc(uid);
-
-    await db.runTransaction(async (t) => {
-        // Acquire lock (or read existing state)
-        // Read lock doc to serialize concurrent claim updates for this user
-        await t.get(lockRef);
-
-        // Read fresh claims from Auth
+    try {
         const userRec = await admin.auth().getUser(uid);
         const currentClaims = { ...(userRec.customClaims || {}) };
 
@@ -32,133 +22,123 @@ async function updateCustomClaimsWithLock(
             delete currentClaims[role];
         }
 
-        // Write claims atomically
         await admin.auth().setCustomUserClaims(uid, currentClaims);
-
-        // Update lock timestamp to track last claims update
-        t.set(lockRef, {
-            lastUpdated: FieldValue.serverTimestamp(),
-            lastRole: role,
-            lastOperation: operation,
-        });
-    });
+    } catch (error) {
+        // User might have been deleted mid-flight, simply ignore
+        logs.error(new Error(`Failed to update claims for ${uid}: ${error}`));
+    }
 }
 
 export const handleSubscriptionEvent = async (event: any) => {
     const db = admin.firestore();
-    const subscriptionEntity = event.payload.subscription?.entity;
+    const webhookSubscription = event.payload.subscription?.entity;
 
-    if (!subscriptionEntity) return;
+    if (!webhookSubscription?.id) {
+        logs.error(new Error(`Missing subscription entity or ID in webhook payload: ${event.id}`));
+        return;
+    }
 
-    const uid = subscriptionEntity.notes?.uid;
-    if (!uid) {
+    let subscriptionEntity;
+    try {
+        // FETCH latest state from Razorpay API as source of truth
+        subscriptionEntity = await getRazorpay().subscriptions.fetch(webhookSubscription.id);
+    } catch (err: any) {
+        logs.error(new Error(`Failed to fetch subscription from Razorpay API: ${webhookSubscription.id}. Error: ${err.message}`));
+        return;
+    }
+
+    const uid = String(subscriptionEntity.notes?.uid);
+    if (!uid || uid === 'undefined') {
         logs.error(new Error(`No UID found in subscription notes for ${subscriptionEntity.id}`));
         return;
     }
 
-    // Map Razorpay event to a status
-    const statusMap: Record<string, string> = {
-        'subscription.activated': 'active',
-        'subscription.charged': 'charged',
-        'subscription.cancelled': 'cancelled',
-        'subscription.halted': 'halted',
-        'subscription.updated': subscriptionEntity.status || 'active',
-    };
-    const newStatus = statusMap[event.event] || subscriptionEntity.status;
+    // Use the fetched subscription status directly
+    const newStatus = String(subscriptionEntity.status);
 
-    // Path: customers/{uid}/subscriptions/{sub_id}
-    const docRef = db.collection(config.customersCollectionPath)
-        .doc(uid)
-        .collection('subscriptions')
-        .doc(subscriptionEntity.id);
+    // Use the original Firestore document ID if it was passed in the subscription notes
+    // This prevents creating duplicate documents (Razorpay ID vs Auto-ID)
+    let subscriptionId = subscriptionEntity.notes?.subscriptionId ? String(subscriptionEntity.notes?.subscriptionId) : undefined;
+    let docRef: admin.firestore.DocumentReference;
 
-    // --- Event Deduplication ---
-    const eventId = event.id || `${event.event}_${subscriptionEntity.id}`;
-    const dedupRef = db.collection('_razorpay_processed_events').doc(eventId);
+    if (subscriptionId) {
+        docRef = db.collection(config.customersCollectionPath)
+            .doc(uid)
+            .collection('subscriptions')
+            .doc(subscriptionId);
+    } else {
+        // FALLBACK: If notes are missing, try to find the document by the Razorpay ID field
+        const subQuery = await db.collection(config.customersCollectionPath)
+            .doc(uid)
+            .collection('subscriptions')
+            .where('subscription_id', '==', subscriptionEntity.id)
+            .limit(1)
+            .get();
+
+        if (!subQuery.empty) {
+            docRef = subQuery.docs[0].ref;
+            subscriptionId = docRef.id;
+        } else {
+            // Last resort: use the Razorpay ID as the doc ID (will create new doc)
+            subscriptionId = subscriptionEntity.id;
+            docRef = db.collection(config.customersCollectionPath)
+                .doc(uid)
+                .collection('subscriptions')
+                .doc(subscriptionId);
+        }
+    }
+
+    // If there's a payment attached to the webhook, fetch its authoritative state
+    let paymentEntity = null;
+    const webhookPayment = event.payload.payment?.entity || (event.payload.payment?.id ? event.payload.payment : null);
+    if (webhookPayment?.id) {
+        try {
+            paymentEntity = await getRazorpay().payments.fetch(webhookPayment.id);
+        } catch (err: any) {
+            logs.error(new Error(`Failed to fetch payment from Razorpay API: ${webhookPayment.id}. Error: ${err.message}`));
+            // We can continue with the subscription update even if payment fetch fails
+        }
+    }
 
     try {
         let shouldSetClaims = false;
         let shouldRemoveClaims = false;
 
-        // 1. Check deduplication FIRST before doing anything else (outside transaction to avoid unnecessary locks)
-        const dedupDocSnapshot = await db.collection('_razorpay_processed_events').doc(eventId).get();
-        if (dedupDocSnapshot.exists) {
-            logs.webhookProcessed(event.event, `SKIPPED (duplicate: ${eventId})`);
-            return;
-        }
-
-        // 2. Read the current subscription state outside the transaction to avoid applying claims to terminal states
-        const subDocSnapshot = await docRef.get();
-        const preTxCurrentStatus = subDocSnapshot.exists ? subDocSnapshot.data()?.status : null;
-
-        if (isTerminalSubscriptionStatus(preTxCurrentStatus)) {
-            logs.webhookProcessed(event.event, `SKIPPED (terminal state: ${preTxCurrentStatus})`);
-            return;
-        }
-
-        if (newStatus && !isValidSubscriptionTransition(preTxCurrentStatus, newStatus)) {
-            logs.error(new Error(`Invalid subscription transition: ${preTxCurrentStatus} → ${newStatus} for ${subscriptionEntity.id}`));
-            return;
-        }
-
-        // 3. Flag claims changes
-        if (event.event === 'subscription.activated' || event.event === 'subscription.charged') {
+        // Ensure we handle claims based on the fetched status
+        if (newStatus === 'active' || newStatus === 'authenticated') {
             shouldSetClaims = true;
-        } else if (event.event === 'subscription.cancelled' || event.event === 'subscription.halted') {
+        } else if (newStatus === 'cancelled' || newStatus === 'halted' || newStatus === 'paused' || newStatus === 'completed') {
             shouldRemoveClaims = true;
         }
 
-        // 3. Manage Custom Claims BEFORE the transaction
-        // Uses serialized lock to prevent concurrent claim updates for the same user
-        // This is safe because updateCustomClaimsWithLock is inherently idempotent
-        const role = subscriptionEntity.notes?.firebaseRole;
+        // Manage Custom Claims BEFORE the transaction
+        const role = subscriptionEntity.notes?.firebaseRole ? String(subscriptionEntity.notes?.firebaseRole) : undefined;
         if (role && shouldSetClaims) {
-            await updateCustomClaimsWithLock(db, uid, 'set', role);
+            await manageCustomClaims(uid, 'set', role);
         } else if (role && shouldRemoveClaims) {
-            await updateCustomClaimsWithLock(db, uid, 'remove', role);
+            await manageCustomClaims(uid, 'remove', role);
         }
 
-        // 4. Update Firestore Subscriptions state & Dedup Doc
-        await db.runTransaction(async (t) => {
-            // Deduplication check inside transaction to prevent race conditions
-            const dedupDoc = await t.get(dedupRef);
-            if (dedupDoc.exists) {
-                logs.webhookProcessed(event.event, `SKIPPED (duplicate: ${eventId})`);
-                return;
-            }
+        // Write atomically
+        const dataToWrite = {
+            ...subscriptionEntity,
+            status: newStatus,
+            updated_at: FieldValue.serverTimestamp(),
+        };
 
-            // Read current subscription state inside transaction
-            const subDoc = await t.get(docRef);
-            const currentStatus = subDoc.exists ? subDoc.data()?.status : null;
+        const batch = db.batch();
+        batch.set(docRef, dataToWrite, { merge: true });
 
-            // Enforce state machine (again strictly inside transaction)
-            if (isTerminalSubscriptionStatus(currentStatus)) {
-                logs.webhookProcessed(event.event, `SKIPPED (terminal state: ${currentStatus})`);
-                return;
-            }
-
-            if (newStatus && !isValidSubscriptionTransition(currentStatus, newStatus)) {
-                logs.error(new Error(`Invalid subscription transition: ${currentStatus} → ${newStatus} for ${subscriptionEntity.id}`));
-                return;
-            }
-
-            // 4. Write atomically
-            const dataToWrite = {
-                ...subscriptionEntity,
-                status: newStatus,
-                _razorpay_event: event.event,
-                _last_event_id: eventId,
+        // Record payment history if we fetched a payment
+        if (paymentEntity) {
+            const paymentRef = docRef.collection('payments').doc(paymentEntity.id);
+            batch.set(paymentRef, {
+                ...paymentEntity,
                 updated_at: FieldValue.serverTimestamp(),
-            };
+            }, { merge: true });
+        }
 
-            t.set(docRef, dataToWrite, { merge: true });
-            t.set(dedupRef, {
-                processedAt: FieldValue.serverTimestamp(),
-                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7-day TTL
-                event: event.event,
-                entityId: subscriptionEntity.id,
-            });
-        });
+        await batch.commit();
 
         logs.webhookProcessed(event.event, subscriptionEntity.id);
     } catch (error: any) {

@@ -37,6 +37,14 @@ export const createOrderHandler = async (event: any) => {
         return;
     }
 
+    const currentData = snap.data();
+
+    // Guard: This is a subscription session, not a one-time order
+    // We exit early to avoid spinning up a transaction
+    if (currentData.mode === 'subscription' || currentData.price || currentData.subscription_id) {
+        return;
+    }
+
     const db = admin.firestore();
 
     // Use Firestore Transaction to prevent TOCTOU race condition
@@ -46,16 +54,16 @@ export const createOrderHandler = async (event: any) => {
     try {
         await db.runTransaction(async (t) => {
             const docSnapshot = await t.get(snap.ref as admin.firestore.DocumentReference);
-            const currentData = docSnapshot.data();
+            const tData = docSnapshot.data();
 
             // Guard: already has order or is in a non-initial state
-            if (!currentData || currentData.order_id || currentData.status === 'created' || currentData.status === 'paid') {
+            if (!tData || tData.order_id || tData.status === 'created' || tData.status === 'paid') {
                 return;
             }
 
             // If processing, check if it's stuck (e.g., > 2 minutes)
-            if (currentData.status === 'processing') {
-                const processingAt = currentData.processing_at?.toDate();
+            if (tData.status === 'processing') {
+                const processingAt = tData.processing_at?.toDate();
                 if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
                     return; // Still processing normally
                 }
@@ -63,7 +71,7 @@ export const createOrderHandler = async (event: any) => {
             }
 
             // Server-side amount validation
-            if (!currentData.amount || currentData.amount <= 0) {
+            if (!tData.amount || tData.amount <= 0) {
                 t.update(snap.ref, {
                     status: 'failed',
                     error: 'Invalid amount: must be a positive integer (in paise)',
@@ -78,7 +86,7 @@ export const createOrderHandler = async (event: any) => {
             });
 
             shouldCreateOrder = true;
-            orderData = currentData;
+            orderData = tData;
         });
 
         if (!shouldCreateOrder || !orderData) return;

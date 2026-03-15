@@ -15,9 +15,7 @@ To ensure your Firestore database is synced correctly with Razorpay, you must co
    - `order.paid`
    - `payment.captured`
    - `payment.failed`
-   - `item.created`, `item.updated`, `item.deleted`
-   - `plan.created`, `plan.updated`
-   - `subscription.activated`, `subscription.charged`, `subscription.cancelled`, `subscription.updated`
+   - `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.completed`, `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.resumed`, `subscription.updated`
 6. Click **Save**.
 
 ## How it works
@@ -61,9 +59,46 @@ await firebase.firestore()
   });
 ```
 
-### Product & Plan sync
+### Admin Plan Management
 
-Products and Plans are automatically synced from Razorpay to the `${param:PRODUCTS_COLLECTION}` collection via webhooks.
+Since Razorpay doesn't have plan webhooks, you must use the following admin endpoints to manage your catalog. Only users with an `admin: true` or `role: 'admin'` custom claim can access these.
+
+#### Setting Admin Claims
+You can set admin claims using the Firebase Admin SDK or the Firebase CLI:
+```javascript
+// Using Node.js Admin SDK
+admin.auth().setCustomUserClaims(uid, { admin: true, role: 'admin' });
+```
+
+---
+
+#### `POST /admin/plans`
+Creates a plan in Razorpay and Firestore.
+
+#### `POST /admin/plans/sync`
+Syncs all Razorpay plans to your Firestore products collection.
+
+#### `GET /plans`
+Public endpoint to fetch all synced plans for your UI.
+
+Razorpay does not send webhook events for Products or Plans. You must use the extension's Admin endpoints to sync plans to your Firestore `${param:PRODUCTS_COLLECTION}` collection.
+
+1. Give an admin user the `admin: true` Custom Claim in Firebase Auth.
+2. Ensure you've acquired a Firebase ID Token for that user.
+3. Call `POST /admin/plans/sync` to bulk-sync existing Razorpay plans to Firestore:
+   ```bash
+   curl -X POST ${function:razorpayWebhookHandler.url}/admin/plans/sync \
+     -H "Authorization: Bearer <Firebase_ID_Token>"
+   ```
+4. Or, create a new plan via `POST /admin/plans`:
+   ```bash
+   curl -X POST ${function:razorpayWebhookHandler.url}/admin/plans \
+     -H "Authorization: Bearer <Firebase_ID_Token>" \
+     -H "Content-Type: application/json" \
+     -d '{"period":"monthly","interval":1,"item":{"name":"Premium","amount":50000,"currency":"INR"}}'
+   ```
+
+You can then list all synced plans publicly for your users via the `GET /plans` endpoint.
 
 ### Role-based Access Control (Custom Claims)
 
@@ -108,8 +143,13 @@ If you enabled events during installation, this extension publishes the followin
 | `com.razorpay.v1.order.paid` | Order is paid |
 | `com.razorpay.v1.payment.captured` | Payment captured |
 | `com.razorpay.v1.payment.failed` | Payment failed |
+| `com.razorpay.v1.subscription.authenticated` | Subscription authenticated |
 | `com.razorpay.v1.subscription.activated` | Subscription activated |
+| `com.razorpay.v1.subscription.charged` | Subscription charged |
+| `com.razorpay.v1.subscription.completed` | Subscription completed |
+| `com.razorpay.v1.subscription.pending` | Subscription pending |
+| `com.razorpay.v1.subscription.halted` | Subscription halted |
+| `com.razorpay.v1.subscription.paused` | Subscription paused |
+| `com.razorpay.v1.subscription.resumed` | Subscription resumed |
+| `com.razorpay.v1.subscription.updated` | Subscription updated |
 | `com.razorpay.v1.subscription.cancelled` | Subscription cancelled |
-| `com.razorpay.v1.item.created` | Product/Plan created |
-| `com.razorpay.v1.item.updated` | Product/Plan updated |
-| `com.razorpay.v1.item.deleted` | Product/Plan deleted |

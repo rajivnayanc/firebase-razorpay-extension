@@ -48,13 +48,15 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
                 update: jest.fn().mockResolvedValue({})
             }
         };
+        mockTransaction.get.mockReset();
+        mockTransaction.update.mockReset();
         jest.clearAllMocks();
     });
 
     it('Behavior: should acquire transaction lock then create subscription', async () => {
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ plan_id: 'plan_123' }),
-        });
+        mockTransaction.get
+            .mockResolvedValueOnce({ exists: true, data: () => ({ plan_id: 'plan_123' }) }) // 1. Sub Doc
+            .mockResolvedValueOnce({ exists: true, data: () => ({}) }); // 2. Plan Doc
 
         const mockEvent = {
             data: mockSnap,
@@ -77,9 +79,9 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
     });
 
     it('Behavior: should SKIP if already processing (prevents double subscription)', async () => {
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ plan_id: 'plan_123', status: 'processing', processing_at: { toDate: () => new Date() } }),
-        });
+        mockTransaction.get
+            .mockResolvedValueOnce({ exists: true, data: () => ({ plan_id: 'plan_123', status: 'processing', processing_at: { toDate: () => new Date() } }) })
+            .mockResolvedValueOnce({ exists: true, data: () => ({}) });
 
         const mockEvent = {
             data: mockSnap,
@@ -93,9 +95,8 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
     });
 
     it('Behavior: should REJECT missing plan_id (server-side validation)', async () => {
-        mockTransaction.get.mockResolvedValue({
-            data: () => ({ amount: 500 }), // No plan_id!
-        });
+        mockTransaction.get
+            .mockResolvedValueOnce({ exists: true, data: () => ({ amount: 500 }) }); // Fails immediately, won't fetch plan doc
 
         const mockEvent = {
             data: mockSnap,
@@ -109,6 +110,27 @@ describe('Firestore Trigger: createSubscription (with Transaction Lock)', () => 
             expect.objectContaining({
                 status: 'failed',
                 error: expect.stringContaining('plan_id')
+            })
+        );
+    });
+
+    it('Behavior: should REJECT if plan_id does not exist in synced plans', async () => {
+        mockTransaction.get
+            .mockResolvedValueOnce({ exists: true, data: () => ({ plan_id: 'plan_123' }) }) // 1. Sub Doc
+            .mockResolvedValueOnce({ exists: false, data: () => ({}) }); // 2. Plan Doc (Doesn't exist)
+
+        const mockEvent = {
+            data: mockSnap,
+            params: { customers_collection: 'customers', uid: 'user1', id: 'sub1' }
+        };
+
+        await createSubscriptionHandler(mockEvent as any);
+
+        expect(mockTransaction.update).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                status: 'failed',
+                error: expect.stringContaining('not found in synced plans')
             })
         );
     });

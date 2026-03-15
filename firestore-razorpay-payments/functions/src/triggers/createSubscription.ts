@@ -75,11 +75,17 @@ export const createSubscriptionHandler = async (event: any) => {
             const planRef = db.collection(config.productsCollectionPath).doc(currentData.plan_id);
             const planDoc = await t.get(planRef);
 
-            if (planDoc.exists) {
-                const planData = planDoc.data() || {};
-                // Prefer the razorpay webhook synced notes field, fallback to manually set string
-                secureRole = planData.razorpay_notes_firebaseRole || planData.firebaseRole || '';
+            if (!planDoc.exists) {
+                t.update(snap.ref, {
+                    status: 'failed',
+                    error: `Invalid plan_id: ${currentData.plan_id} not found in synced plans.`,
+                });
+                return;
             }
+
+            const planData = planDoc.data() || {};
+            // Prefer the razorpay notes synced field, fallback to manually set string
+            secureRole = planData.notes?.firebaseRole || planData.razorpay_notes_firebaseRole || planData.firebaseRole || '';
 
             // Acquire lock atomically
             t.update(snap.ref, {

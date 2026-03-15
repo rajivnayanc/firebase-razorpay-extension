@@ -2,15 +2,47 @@ import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import config from '../config';
 import { logs } from '../logs';
-import { isValidSessionTransition, isTerminalSessionStatus } from '../stateMachine';
+import { getRazorpay } from '../api';
 
 export const handlePaymentEvent = async (event: any) => {
     const db = admin.firestore();
-    const paymentEntity = event.payload.payment?.entity;
-    const orderEntity = event.payload.order?.entity;
+    const webhookPaymentId = event.payload.payment?.entity?.id || event.payload.payment?.id;
+    const webhookOrderId = event.payload.order?.entity?.id || event.payload.order?.id;
+
+    if (!webhookPaymentId && !webhookOrderId) {
+        logs.error(new Error(`Missing both payment and order IDs in webhook payload: ${event.id}`));
+        return;
+    }
+
+    let fetchedEntity: any = null;
+    let isPayment = false;
+
+    try {
+        if (event.event.startsWith('payment.') && webhookPaymentId) {
+            fetchedEntity = await getRazorpay().payments.fetch(webhookPaymentId);
+            isPayment = true;
+        } else if (event.event.startsWith('order.') && webhookOrderId) {
+            fetchedEntity = await getRazorpay().orders.fetch(webhookOrderId);
+        } else if (webhookOrderId) {
+            // Fallback: try order first if available
+            fetchedEntity = await getRazorpay().orders.fetch(webhookOrderId);
+        } else if (webhookPaymentId) {
+            // Fallback: target payment if only payment ID is present
+            fetchedEntity = await getRazorpay().payments.fetch(webhookPaymentId);
+            isPayment = true;
+        }
+    } catch (err: any) {
+        logs.error(new Error(`Failed to fetch entity from Razorpay API. Event: ${event.event}. Error: ${err.message}`));
+        return;
+    }
+
+    if (!fetchedEntity) {
+        logs.error(new Error(`Failed to resolve entity for event: ${event.event}`));
+        return;
+    }
 
     // We rely on order properties being passed down via notes during createOrder
-    const notes = orderEntity?.notes || paymentEntity?.notes;
+    const notes = fetchedEntity.notes;
     const uid = notes?.uid;
     const sessionId = notes?.sessionId;
 
@@ -19,67 +51,38 @@ export const handlePaymentEvent = async (event: any) => {
         return;
     }
 
-    const newStatus = (event.event === 'payment.captured' || event.event === 'order.paid')
-        ? 'paid'
-        : event.event === 'payment.failed'
-            ? 'failed'
-            : 'processing';
+    let newStatus = 'processing';
+    if (isPayment) {
+        if (fetchedEntity.status === 'captured') newStatus = 'paid';
+        else if (fetchedEntity.status === 'failed') newStatus = 'failed';
+        else newStatus = 'processing';
+    } else {
+        if (fetchedEntity.status === 'paid') newStatus = 'paid';
+        else newStatus = 'processing';
+    }
 
-    // Path: customers/{uid}/checkout_sessions/{id}
+    // Path: customers/{uid}/checkout_sessions/{sessionId}
     const docRef = db.collection(config.customersCollectionPath)
         .doc(uid)
         .collection('checkout_sessions')
         .doc(sessionId);
 
-    // --- Event Deduplication ---
-    const eventId = event.id || `${event.event}_${paymentEntity?.id || orderEntity?.id}`;
-    const dedupRef = db.collection('_razorpay_processed_events').doc(eventId);
-
     try {
-        await db.runTransaction(async (t) => {
-            // 1. Check if this exact event was already processed
-            const dedupDoc = await t.get(dedupRef);
-            if (dedupDoc.exists) {
-                logs.webhookProcessed(event.event, `SKIPPED (duplicate: ${eventId})`);
-                return;
-            }
+        const dataToWrite: any = {
+            ...fetchedEntity,
+            status: newStatus,
+            updated_at: FieldValue.serverTimestamp(),
+        };
 
-            // 2. Read current session state
-            const sessionDoc = await t.get(docRef);
-            const currentStatus = sessionDoc.exists ? sessionDoc.data()?.status : null;
+        if (isPayment) {
+            dataToWrite.razorpay_payment_id = fetchedEntity.id;
+        } else {
+            dataToWrite.order_id = fetchedEntity.id;
+        }
 
-            // 3. Enforce state machine — reject invalid transitions
-            if (isTerminalSessionStatus(currentStatus)) {
-                logs.webhookProcessed(event.event, `SKIPPED (terminal state: ${currentStatus})`);
-                return;
-            }
+        await docRef.set(dataToWrite, { merge: true });
 
-            if (!isValidSessionTransition(currentStatus, newStatus)) {
-                logs.error(new Error(`Invalid state transition: ${currentStatus} → ${newStatus} for session ${sessionId}`));
-                return;
-            }
-
-            // 4. Write atomically
-            const dataToWrite: any = {
-                status: newStatus,
-                _razorpay_event: event.event,
-                _last_event_id: eventId,
-                updated_at: FieldValue.serverTimestamp(),
-            };
-
-            if (paymentEntity) {
-                dataToWrite.razorpay_payment_id = paymentEntity.id;
-            }
-
-            t.set(docRef, dataToWrite, { merge: true });
-            t.set(dedupRef, {
-                processedAt: FieldValue.serverTimestamp(),
-                event: event.event,
-                entityId: paymentEntity?.id || orderEntity?.id,
-            });
-        });
-
-        logs.webhookProcessed(event.event, paymentEntity?.id || orderEntity?.id);
+        logs.webhookProcessed(event.event, fetchedEntity.id);
     } catch (error: any) {
         logs.error(error);
     }

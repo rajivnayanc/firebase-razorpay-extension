@@ -31,6 +31,6 @@ You are responsible for any costs associated with your use of these services.
 Before installing, decide on the paths for your Firestore collections:
 
 - `CUSTOMERS_COLLECTION`: Default is `customers`. This is where customer documents and their `checkout_sessions` and `subscriptions` subcollections will be stored.
-- `PRODUCTS_COLLECTION`: Default is `products`. Razorpay Items and Plans will be synced here via webhooks.
+- `PRODUCTS_COLLECTION`: Default is `products`. Plans can be manually synced or created via the extension's Admin HTTP API.
 
 You will also need to generate a secure, random string to act as your Webhook Secret.
