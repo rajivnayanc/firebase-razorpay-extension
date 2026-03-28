@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as functions from 'firebase-functions/v1';
+import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import config from '../config';
 import { logs } from '../logs';
@@ -16,10 +17,10 @@ const db = admin.firestore();
  * Deletes the Razorpay customer object and cancels subscriptions when the
  * customer document in Cloud Firestore is deleted.
  */
-export const onCustomerDataDeleted = functions.firestore
-    .document(`${config.customersCollectionPath}/{uid}`)
-    .onDelete(async (snap, context) => {
-        const uid = context.params.uid;
+export const onCustomerDataDeleted = onDocumentDeleted(
+    `${config.customersCollectionPath}/{uid}`,
+    async (event) => {
+        const uid = event.params.uid;
         logs.info(`Customer document deleted for user ${uid}. Cleaning up...`);
 
         try {
@@ -40,15 +41,20 @@ export const onCustomerDataDeleted = functions.firestore
                     try {
                         await getRazorpay().subscriptions.cancel(subscriptionId);
                         logs.info(`Cancelled Razorpay subscription ${subscriptionId} for deleted user ${uid}`);
+                        
+                        batch.update(doc.ref, {
+                            status: 'cancelled',
+                            ended_at: FieldValue.serverTimestamp(),
+                        });
                     } catch (rpError: any) {
                         logs.error(`Failed to cancel Razorpay subscription ${subscriptionId}: ${rpError.message || rpError}`);
                     }
+                } else {
+                    batch.update(doc.ref, {
+                        status: 'cancelled',
+                        ended_at: FieldValue.serverTimestamp(),
+                    });
                 }
-
-                batch.update(doc.ref, {
-                    status: 'cancelled',
-                    ended_at: FieldValue.serverTimestamp(),
-                });
             }
 
             if (!subscriptionsSnap.empty) {

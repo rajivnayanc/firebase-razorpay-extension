@@ -10,6 +10,14 @@ import { logs } from './logs';
 // Initialize logging
 logs.init();
 
+// Early validation of configuration
+import config from './config';
+if (!config.razorpayKeyId || !config.razorpayKeySecret) {
+    logs.error(new Error("RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is missing. Extension will not function correctly."));
+} else if (!config.razorpayKeyId.startsWith('rzp_')) {
+    logs.error(new Error(`RAZORPAY_KEY_ID seems malformed (expected to start with 'rzp_'). Configuration is likely invalid.`));
+}
+
 // Export all Extension functions
 export {
     // Session Triggers

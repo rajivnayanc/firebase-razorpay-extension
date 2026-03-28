@@ -38,7 +38,8 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
     beforeEach(() => {
         mockSnap = {
-            data: () => ({ amount: 50000 }),
+            exists: true,
+            data: () => ({ productId: 'prod_123' }),
             ref: {
                 path: 'customers/user1/checkout_sessions/session1',
                 update: jest.fn().mockResolvedValue({})
@@ -53,6 +54,19 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
             params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
         };
 
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 50000 }) });
+        const firestoreMock = {
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue({ exists: true, ...mockSnap }),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1)) // fallback
+            })),
+        };
+        require('firebase-admin').firestore.mockImplementation(() => firestoreMock);
+        
         await createOrderHandler(mockEvent as any);
 
         // Verify lock was acquired
@@ -67,9 +81,43 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
         }));
     });
 
+    it('Behavior: should use currency from product document, ignoring client currency', async () => {
+        mockSnap = {
+            exists: true,
+            data: () => ({ productId: 'prod_123', currency: 'USD' }), // Client sends USD
+            ref: mockSnap.ref
+        };
+        const mockEvent = {
+            data: mockSnap,
+            params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
+        };
+
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 50000, currency: 'GBP' }) }); // Product requires GBP
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue({ exists: true, ...mockSnap }),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1)) // fallback
+            })),
+        }));
+        
+        const { getRazorpay } = require('../api');
+        
+        await createOrderHandler(mockEvent as any);
+
+        // Verify it sent GBP to Razorpay API, not USD
+        expect(getRazorpay().orders.create).toHaveBeenCalledWith(
+            expect.objectContaining({ currency: 'GBP' })
+        );
+    });
+
     it('Behavior: should SKIP if document is already processing (prevents double order)', async () => {
         mockSnap = {
-            data: () => ({ amount: 50000, status: 'processing', processing_at: { toDate: () => new Date() } }),
+            exists: true,
+            data: () => ({ productId: 'prod_123', status: 'processing', processing_at: { toDate: () => new Date() } }),
             ref: mockSnap.ref
         };
 
@@ -85,7 +133,8 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
     it('Behavior: should SKIP if document already has paid status', async () => {
         mockSnap = {
-            data: () => ({ amount: 50000, status: 'paid', order_id: 'order_existing' }),
+            exists: true,
+            data: () => ({ productId: 'prod_123', status: 'paid', order_id: 'order_existing' }),
             ref: mockSnap.ref
         };
 
@@ -99,9 +148,28 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
         expect(mockSnap.ref.update).not.toHaveBeenCalled();
     });
 
+    it('Behavior: should safely reject non-string or oversized productId (Input Fuzzing)', async () => {
+        const testCases = [
+            { productId: 12345 }, // Number
+            { productId: { sql: 'injection' } }, // Object
+            { productId: 'a'.repeat(300) } // Oversized string
+        ];
+
+        for (const testCase of testCases) {
+            const tempSnap = { data: () => testCase, ref: { update: jest.fn().mockResolvedValue({}) } };
+            const mockEvent = { data: tempSnap, params: { customers_collection: 'customers', uid: 'user1', id: 'session1' } };
+            
+            await createOrderHandler(mockEvent as any);
+            
+            expect(tempSnap.ref.update).toHaveBeenCalledWith(
+                expect.objectContaining({ status: 'failed', error: expect.stringContaining('valid productId string') })
+            );
+        }
+    });
+
     it('Behavior: should REJECT zero or negative amounts (server-side validation)', async () => {
         mockSnap = {
-            data: () => ({ amount: 0 }),
+            data: () => ({ productId: 'prod_123' }),
             ref: mockSnap.ref
         };
 
@@ -110,20 +178,31 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
             params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
         };
 
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 0 }) });
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue(mockSnap),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
+            })),
+        }));
         await createOrderHandler(mockEvent as any);
 
         // Should set failed status
         expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: 'failed',
-                error: expect.stringContaining('Invalid amount')
+                error: expect.stringContaining('invalid configuration')
             })
         );
     });
 
     it('Behavior: should handle razorpay API errors gracefully', async () => {
         mockSnap = {
-            data: () => ({ amount: -100 }),
+            data: () => ({ productId: 'prod_123' }),
             ref: mockSnap.ref
         };
 
@@ -132,6 +211,17 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
             params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
         };
 
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: -100 }) });
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue(mockSnap),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
+            })),
+        }));
         await createOrderHandler(mockEvent as any);
 
         // Should have set failed status in response to Razorpay API Error
@@ -154,7 +244,8 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
 
     it('Behavior: should return early for subscription mode', async () => {
         mockSnap = {
-            data: () => ({ amount: 50000, mode: 'subscription' }),
+            exists: true,
+            data: () => ({ productId: 'prod_123', mode: 'subscription' }),
             ref: mockSnap.ref
         };
 
@@ -179,6 +270,17 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
             params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
         };
 
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 50000 }) });
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue(mockSnap),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
+            })),
+        }));
         await createOrderHandler(mockEvent as any);
 
         expect(mockSnap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
@@ -198,6 +300,17 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
             params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
         };
 
+        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 50000 }) });
+        require('firebase-admin').firestore.mockImplementation(() => ({
+            collection: jest.fn().mockReturnThis(),
+            doc: jest.fn().mockReturnThis(),
+            get: mockSnapGet,
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue(mockSnap),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
+            })),
+        }));
         await createOrderHandler(mockEvent as any);
 
         expect(mockSnap.ref.update).toHaveBeenCalledWith(expect.objectContaining({

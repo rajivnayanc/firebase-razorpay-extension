@@ -9,6 +9,7 @@ jest.mock('firebase-admin', () => {
         doc: jest.fn().mockReturnThis(),
         set: jest.fn().mockResolvedValue({}),
         get: jest.fn().mockResolvedValue({
+            data: () => undefined, // Represents a non-existent document
             docs: [
                 { data: () => ({ id: 'plan_1', item: { name: 'Plan 1', amount: 500 }, active: true }) }
             ]
@@ -33,9 +34,9 @@ jest.mock('firebase-admin', () => {
 jest.mock('razorpay', () => {
     return jest.fn().mockImplementation(() => ({
         plans: {
-            create: jest.fn().mockResolvedValue({ id: 'plan_new123', item: { name: 'New Plan', amount: 500, active: true } }),
+            create: jest.fn().mockResolvedValue({ id: 'plan_new123', period: 'monthly', interval: 1, item: { name: 'New Plan', amount: 500, active: true } }),
             all: jest.fn().mockResolvedValue({
-                items: [{ id: 'plan_sync1', item: { name: 'Sync Plan 1', active: true } }]
+                items: [{ id: 'plan_sync1', period: 'yearly', interval: 1, item: { name: 'Sync Plan 1', active: true } }]
             })
         }
     }));
@@ -54,7 +55,7 @@ describe('Admin Plan Management (Callable Functions)', () => {
         };
         const context: any = { auth: { token: { admin: false } } };
 
-        await expect(createPlan.run(data, context)).rejects.toThrow('Must be an administrative user to initiate plan creation.');
+        await expect(createPlan.run({ data, auth: context.auth } as any)).rejects.toThrow('Must be an administrative user to initiate plan creation.');
     });
 
     it('Behavior: should allow createPlan with admin claim', async () => {
@@ -65,20 +66,28 @@ describe('Admin Plan Management (Callable Functions)', () => {
         };
         const context: any = { auth: { token: { admin: true } } };
 
-        const result: any = await createPlan.run(data, context);
-        expect(result.id).toBe('plan_new123');
+        const result: any = await createPlan.run({ data, auth: context.auth } as any);
+        expect(result.id).toBe('newplan');
+        expect(result.allowedPlans['monthly']).toBe('plan_new123');
     });
 
     it('Behavior: should reject syncPlans without admin claim', async () => {
-        const context: any = { auth: { token: { role: 'user' } } };
+        const context: any = { auth: { token: { role: 'admin' } } }; // role: 'admin' is no longer sufficient
 
-        await expect(syncPlans.run(null, context)).rejects.toThrow('Must be an administrative user to initiate plan sync.');
+        await expect(syncPlans.run({ data: null, auth: context.auth } as any)).rejects.toThrow('Must be an administrative user to initiate plan sync.');
+    });
+
+    it('Behavior: should reject createPlan without admin claim', async () => {
+        const data = { period: 'monthly', interval: 1, item: { name: 'Test', amount: 500 } };
+        const context: any = { auth: { token: { role: 'admin' } } };
+
+        await expect(createPlan.run({ data, auth: context.auth } as any)).rejects.toThrow('Must be an administrative user to initiate plan creation.');
     });
 
     it('Behavior: should allow syncPlans with admin claim', async () => {
-        const context: any = { auth: { token: { role: 'admin' } } };
+        const context: any = { auth: { token: { admin: true } } };
 
-        const result: any = await syncPlans.run(null, context);
+        const result: any = await syncPlans.run({ data: null, auth: context.auth } as any);
         expect(result.count).toBe(1);
     });
 
@@ -86,7 +95,7 @@ describe('Admin Plan Management (Callable Functions)', () => {
         const data = { period: 'monthly' }; // missing interval, item
         const context: any = { auth: { token: { admin: true } } };
 
-        await expect(createPlan.run(data, context)).rejects.toThrow('Missing required fields: period, interval, item details.');
+        await expect(createPlan.run({ data, auth: context.auth } as any)).rejects.toThrow('Missing required fields: period, interval, item details.');
     });
 
     it('Behavior: should handle Razorpay API error in createPlan', async () => {
@@ -100,15 +109,15 @@ describe('Admin Plan Management (Callable Functions)', () => {
         const { getRazorpay } = require('../api');
         getRazorpay().plans.create.mockRejectedValueOnce(new Error('API Error'));
 
-        await expect(createPlan.run(data, context)).rejects.toThrow('Failed to create plan.');
+        await expect(createPlan.run({ data, auth: context.auth } as any)).rejects.toThrow('Failed to create plan.');
     });
 
     it('Behavior: should handle Razorpay API error in syncPlans', async () => {
-        const context: any = { auth: { token: { role: 'admin' } } };
+        const context: any = { auth: { token: { admin: true } } };
 
         const { getRazorpay } = require('../api');
         getRazorpay().plans.all.mockRejectedValueOnce(new Error('Sync failed'));
 
-        await expect(syncPlans.run(null, context)).rejects.toThrow('Sync failed.');
+        await expect(syncPlans.run({ data: null, auth: context.auth } as any)).rejects.toThrow('Sync failed.');
     });
 });

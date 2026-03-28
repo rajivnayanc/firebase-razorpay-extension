@@ -71,15 +71,23 @@ export const handlePaymentEvent = async (event: any) => {
 
     try {
         const dataToWrite: any = {
-            ...fetchedEntity,
             status: newStatus,
             updated_at: FieldValue.serverTimestamp(),
         };
 
         if (isPayment) {
-            dataToWrite.razorpay_payment_id = fetchedEntity.id;
+            dataToWrite.razorpay_payment_id = fetchedEntity!.id;
+            dataToWrite.amount = (fetchedEntity as any).amount;
+            dataToWrite.currency = (fetchedEntity as any).currency;
+            dataToWrite.method = (fetchedEntity as any).method;
+            dataToWrite.order_id = (fetchedEntity as any).order_id;
+            dataToWrite.description = (fetchedEntity as any).description;
         } else {
-            dataToWrite.order_id = fetchedEntity.id;
+            dataToWrite.order_id = fetchedEntity!.id;
+            dataToWrite.amount = (fetchedEntity as any).amount;
+            dataToWrite.amount_paid = (fetchedEntity as any).amount_paid;
+            dataToWrite.amount_due = (fetchedEntity as any).amount_due;
+            dataToWrite.currency = (fetchedEntity as any).currency;
         }
 
         await docRef.set(dataToWrite, { merge: true });
@@ -87,5 +95,6 @@ export const handlePaymentEvent = async (event: any) => {
         logs.webhookProcessed(event.event, fetchedEntity.id);
     } catch (error: any) {
         logs.error(error);
+        throw error; // Let api.ts catch and handle it for retries
     }
 };

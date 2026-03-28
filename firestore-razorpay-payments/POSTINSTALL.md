@@ -22,7 +22,7 @@ To ensure your Firestore database is synced correctly with Razorpay, you must co
 
 ### One-time payments
 
-Write a document to the `${param:CUSTOMERS_COLLECTION}/{uid}/checkout_sessions` subcollection to create a Razorpay Order:
+Write a document to the `${param:CUSTOMERS_COLLECTION}/{uid}/checkout_sessions` subcollection with a `productId` to create a Razorpay Order. The `amount` will be securely fetched from the backend:
 
 ```javascript
 const docRef = await firebase.firestore()
@@ -30,9 +30,7 @@ const docRef = await firebase.firestore()
   .doc(userId)
   .collection('checkout_sessions')
   .add({
-    amount: 50000,      // Amount in paise (₹500.00)
-    currency: 'INR',
-    receipt: `order_${Date.now()}`,
+    productId: 'prod_premium_shoes', // Document ID of the item in your products collection
   });
 
 // Listen for the order ID
@@ -54,51 +52,130 @@ await firebase.firestore()
   .doc(userId)
   .collection('subscriptions')
   .add({
-    plan_id: 'plan_XXXXXXXXXXXXX',
-    total_count: 12,
+    productId: 'prod_premium_membership', // Document ID in products collection
+    interval: 'monthly', // Maps to the allowedPlans in your product document
   });
+```
+
+## Required Security Rules
+
+> **⚠️ CRITICAL:** You MUST configure these Firestore Security Rules before going to production. Without them, any authenticated user can modify product prices and other users' data.
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Products / Plans Catalog ──
+    // Read-only for all users. Only the extension (Admin SDK) and admin
+    // callable functions can write here.
+    match /${param:PRODUCTS_COLLECTION}/{productId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ── Customer Documents ──
+    match /${param:CUSTOMERS_COLLECTION}/{uid} {
+      // Users can only read their own customer document.
+      // They should NOT be able to write to the root customer doc
+      // (razorpay_customer_id is set by the extension).
+      allow read: if request.auth.uid == uid;
+      allow write: if false;
+
+      // ── Checkout Sessions (One-time Orders) ──
+      match /checkout_sessions/{id} {
+        allow read: if request.auth.uid == uid;
+
+        // Users can create a checkout session, but:
+        //  - Cannot supply their own 'amount' (server-side lookup from products)
+        //  - Cannot supply 'order_id' or 'status' (set by extension)
+        //  - Must supply a 'productId'
+        allow create: if request.auth.uid == uid
+          && !("amount" in request.resource.data)
+          && !("order_id" in request.resource.data)
+          && !("status" in request.resource.data)
+          && !("currency" in request.resource.data)
+          && ("productId" in request.resource.data);
+
+        // Only the extension (Admin SDK) updates checkout sessions
+        allow update, delete: if false;
+      }
+
+      // ── Subscriptions ──
+      match /subscriptions/{id} {
+        allow read: if request.auth.uid == uid;
+
+        // Users can create a subscription request, but:
+        //  - Cannot supply their own 'plan_id' (resolved server-side from product)
+        //  - Cannot supply 'subscription_id' or 'status'
+        //  - Cannot supply 'customer_id' (fetched from their customer doc)
+        //  - Must supply 'productId' and 'interval'
+        allow create: if request.auth.uid == uid
+          && !("plan_id" in request.resource.data)
+          && !("subscription_id" in request.resource.data)
+          && !("status" in request.resource.data)
+          && !("customer_id" in request.resource.data)
+          && !("total_count" in request.resource.data)
+          && ("productId" in request.resource.data)
+          && ("interval" in request.resource.data);
+
+        // Only the extension (Admin SDK) updates subscriptions
+        allow update, delete: if false;
+
+        // Payment sub-documents under subscriptions
+        match /payments/{paymentId} {
+          allow read: if request.auth.uid == uid;
+          allow write: if false;
+        }
+      }
+    }
+
+    // ── Deny everything else by default ──
+    // No wildcard match — unlisted paths are denied
+  }
+}
 ```
 
 ### Admin Plan Management
 
-Since Razorpay doesn't have plan webhooks, you must use the following admin endpoints to manage your catalog. Only users with an `admin: true` or `role: 'admin'` custom claim can access these.
+Since Razorpay doesn't have plan webhooks, you must use the following admin endpoints to manage your catalog. Only users with the `admin: true` custom claim can access these.
 
 #### Setting Admin Claims
-You can set admin claims using the Firebase Admin SDK or the Firebase CLI:
+The recommended way to bootstrap the first admin user is by using a short Node.js script using the Firebase Admin SDK. Run this script locally:
+
 ```javascript
-// Using Node.js Admin SDK
-admin.auth().setCustomUserClaims(uid, { admin: true, role: 'admin' });
+const admin = require('firebase-admin');
+// Initialize with your service account
+admin.initializeApp({
+  credential: admin.credential.applicationDefault() 
+});
+
+const uid = 'YOUR_USER_UID';
+admin.auth().setCustomUserClaims(uid, { admin: true })
+  .then(() => console.log('Admin claim set successfully!'));
 ```
 
 ---
 
-#### `POST /admin/plans`
-Creates a plan in Razorpay and Firestore.
+#### `POST /admin/plans` & `POST /admin/plans/sync`
+These are **Firebase Callable Functions** (not standard REST endpoints). They securely execute the plan creation and sync. You must call them from your client application using the standard Firebase SDK:
 
-#### `POST /admin/plans/sync`
-Syncs all Razorpay plans to your Firestore products collection.
+```javascript
+import { getFunctions, httpsCallable } from "firebase/functions";
+const functions = getFunctions();
 
-#### `GET /plans`
-Public endpoint to fetch all synced plans for your UI.
+// Sync all plans from Razorpay to your products collection
+const syncPlans = httpsCallable(functions, "ext-razorpay-payments-syncPlans");
+syncPlans().then(result => console.log("Synced Plans:", result.data.count));
 
-Razorpay does not send webhook events for Products or Plans. You must use the extension's Admin endpoints to sync plans to your Firestore `${param:PRODUCTS_COLLECTION}` collection.
-
-1. Give an admin user the `admin: true` Custom Claim in Firebase Auth.
-2. Ensure you've acquired a Firebase ID Token for that user.
-3. Call `POST /admin/plans/sync` to bulk-sync existing Razorpay plans to Firestore:
-   ```bash
-   curl -X POST ${function:razorpayWebhookHandler.url}/admin/plans/sync \
-     -H "Authorization: Bearer <Firebase_ID_Token>"
-   ```
-4. Or, create a new plan via `POST /admin/plans`:
-   ```bash
-   curl -X POST ${function:razorpayWebhookHandler.url}/admin/plans \
-     -H "Authorization: Bearer <Firebase_ID_Token>" \
-     -H "Content-Type: application/json" \
-     -d '{"period":"monthly","interval":1,"item":{"name":"Premium","amount":50000,"currency":"INR"}}'
-   ```
-
-You can then list all synced plans publicly for your users via the `GET /plans` endpoint.
+// Create a new plan from the admin dashboard UI
+const createPlan = httpsCallable(functions, "ext-razorpay-payments-createPlan");
+createPlan({
+  period: "monthly",
+  interval: 1,
+  item: { name: "Premium", amount: 50000, currency: "INR" }
+});
+```
 
 ### Role-based Access Control (Custom Claims)
 
@@ -110,21 +187,7 @@ You can automatically grant Firebase Auth custom claims to users when they subsc
 
 > **Security Note:** Custom claims are fetched from Razorpay directly to prevent privilege escalation. Do not pass the `firebaseRole` field from the client.
 
-## Verify a Payment
 
-Use the verify endpoint to confirm payment authenticity:
-
-```
-POST ${function:razorpayWebhookHandler.url}/verify-payment
-Authorization: Bearer <Firebase ID Token>
-Content-Type: application/json
-
-{
-  "razorpay_order_id": "order_xxx",
-  "razorpay_payment_id": "pay_xxx",
-  "razorpay_signature": "xxx"
-}
-```
 
 ## Monitoring
 

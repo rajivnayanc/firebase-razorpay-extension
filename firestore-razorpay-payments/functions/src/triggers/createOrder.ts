@@ -33,36 +33,86 @@ export const createOrderHandler = async (event: any) => {
     }
 
     // Server-side amount validation
-    if (!currentData.amount || currentData.amount <= 0) {
+    if (currentData.amount) {
         await snap.ref.update({
             status: 'failed',
-            error: 'Invalid amount: must be a positive integer (in paise)',
+            error: 'Providing amount directly is not allowed. Provide a productId instead.',
         });
         return;
     }
 
-    // If order already created, paid, or has an order_id assigned, skip.
-    if (currentData.order_id || currentData.status === 'created' || currentData.status === 'paid') {
+    if (!currentData.productId || typeof currentData.productId !== 'string' || currentData.productId.length > 256) {
+        await snap.ref.update({
+            status: 'failed',
+            error: 'Missing or invalid productId. A valid productId string must be provided.',
+        });
         return;
     }
 
-    if (currentData.status === 'processing') {
-        const processingAt = currentData.processing_at?.toDate();
-        if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
-            return; // Still processing normally
-        }
+    const productSnap = await admin.firestore().collection(config.productsCollectionPath).doc(currentData.productId).get();
+    if (!productSnap.exists) {
+        logs.error(new Error(`Product ${currentData.productId} not found.`));
+        await snap.ref.update({
+            status: 'failed',
+            error: 'The selected product is not available.',
+        });
+        return;
     }
 
-    // Set processing
-    await snap.ref.update({
-        status: 'processing',
-        processing_at: FieldValue.serverTimestamp(),
+    const productData = productSnap.data();
+    if (!productData || !productData.amount || productData.amount <= 0) {
+        logs.error(new Error(`Product ${currentData.productId} has invalid amount: ${productData?.amount}`));
+        await snap.ref.update({
+            status: 'failed',
+            error: 'The selected product has an invalid configuration.',
+        });
+        return;
+    }
+    const orderAmount = productData.amount;
+    // Currency must come from product doc — the amount integer (in smallest unit)
+    // is only meaningful paired with the correct currency.
+    // e.g., 50000 INR paise = ₹500, but 50000 USD cents = $500 ≈ ₹41,500
+    const orderCurrency = productData.currency || 'INR';
+
+    // Set processing inside a transaction to prevent race conditions
+    let shouldProcess = false;
+    await admin.firestore().runTransaction(async (transaction) => {
+        const docSnap = await transaction.get(snap.ref as admin.firestore.DocumentReference);
+        if (!docSnap.exists) return;
+        const txData = docSnap.data();
+        if (!txData) return;
+
+        // If order already created, paid, or has an order_id assigned, skip.
+        if (txData.order_id || txData.status === 'created' || txData.status === 'paid') {
+            shouldProcess = false;
+            return;
+        }
+
+        if (txData.status === 'processing') {
+            const processingAt = txData.processing_at?.toDate();
+            if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
+                shouldProcess = false;
+                return; // Still processing normally
+            }
+        }
+
+        // Lock the document
+        transaction.update(snap.ref, {
+            status: 'processing',
+            processing_at: FieldValue.serverTimestamp(),
+        });
+        shouldProcess = true;
     });
+
+    if (!shouldProcess) {
+        return;
+    }
 
     try {
         // Receipt-based duplicate check: use Firestore doc ID as receipt
         // If a previous attempt created an order with this receipt, reuse it
-        const receipt = event.params.id;
+        // Ensure receipt is max 40 characters as required by Razorpay API
+        const receipt = event.params.id.substring(0, 40);
         let order: Orders.RazorpayOrder;
 
         try {
@@ -78,12 +128,13 @@ export const createOrderHandler = async (event: any) => {
             } else {
                 // Create new Razorpay Order
                 const options: Orders.RazorpayOrderCreateRequestBody = {
-                    amount: currentData.amount,
-                    currency: currentData.currency || 'INR',
+                    amount: orderAmount,
+                    currency: orderCurrency,
                     receipt,
                     notes: {
                         uid: event.params.uid,
                         sessionId: event.params.id,
+                        productId: currentData.productId,
                     },
                 };
 
@@ -93,12 +144,13 @@ export const createOrderHandler = async (event: any) => {
         } catch (fetchError: any) {
             // If the receipt lookup fails, fall back to creating a new order
             const options: Orders.RazorpayOrderCreateRequestBody = {
-                amount: currentData.amount,
-                currency: currentData.currency || 'INR',
+                amount: orderAmount,
+                currency: orderCurrency,
                 receipt,
                 notes: {
                     uid: event.params.uid,
                     sessionId: event.params.id,
+                    productId: currentData.productId,
                 },
             };
 
@@ -107,8 +159,12 @@ export const createOrderHandler = async (event: any) => {
         }
 
         await snap.ref.update({
-            ...order,
             order_id: order.id,
+            amount: order.amount,
+            amount_paid: order.amount_paid,
+            amount_due: order.amount_due,
+            currency: order.currency,
+            receipt: order.receipt,
             status: 'created',
             created_at: FieldValue.serverTimestamp(),
         });
@@ -117,7 +173,7 @@ export const createOrderHandler = async (event: any) => {
         logs.error(error);
         await snap.ref.update({
             status: 'failed',
-            error: error.message || 'Failed to create Razorpay Order',
+            error: 'Failed to create Razorpay Order due to an internal error or validation issue',
         });
     }
 };

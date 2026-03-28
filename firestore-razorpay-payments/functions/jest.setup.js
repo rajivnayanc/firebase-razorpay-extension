@@ -5,7 +5,6 @@ process.env.RAZORPAY_WEBHOOK_SECRET = 'test_webhook_secret';
 process.env.CUSTOMERS_COLLECTION = 'customers';
 process.env.PRODUCTS_COLLECTION = 'products';
 process.env.ALLOWED_ORIGINS = '';
-process.env.DEDUP_TTL_DAYS = '7';
 
 jest.mock('firebase-functions/v2/firestore', () => ({
     onDocumentCreated: jest.fn(),

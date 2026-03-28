@@ -1,45 +1,24 @@
-import * as functions from 'firebase-functions/v1';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { getRazorpay } from './api';
 import config from './config';
 import { logs } from './logs';
-
-// Helper to sanitize plan data
-const sanitizePlan = (plan: any) => {
-    const sanitizedPlan: any = {
-        id: plan.id,
-        entity: plan.entity,
-        interval: plan.interval,
-        period: plan.period,
-        item: plan.item,
-        notes: plan.notes || {},
-        active: true, // Plans don't return an active boolean at the top level
-        created_at: plan.created_at,
-        updated_at: admin.firestore.FieldValue.serverTimestamp(),
-        _synced_via: 'admin_api'
-    };
-
-    if (plan.item && (plan.item as any).active !== undefined) {
-        sanitizedPlan.active = (plan.item as any).active;
-    }
-
-    return sanitizedPlan;
-};
+import { sanitizePlan, generateProductId, generatePlanKey } from './utils';
 
 // ---------- Admin: Create Plan ----------
-export const createPlan = functions.https.onCall(async (data, context) => {
+export const createPlan = onCall(async (request) => {
     // 1. Verify Admin Auth
-    if (!context.auth || (context.auth.token.admin !== true && context.auth.token.role !== 'admin')) {
-        throw new functions.https.HttpsError(
+    if (!request.auth || request.auth.token.admin !== true) {
+        throw new HttpsError(
             'permission-denied',
             'Must be an administrative user to initiate plan creation.'
         );
     }
 
-    const { period, interval, item, notes } = data;
+    const { period, interval, item, notes } = request.data;
 
     if (!period || !interval || !item || !item.name || !item.amount) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
             'invalid-argument',
             'Missing required fields: period, interval, item details.'
         );
@@ -54,26 +33,46 @@ export const createPlan = functions.https.onCall(async (data, context) => {
             notes
         });
 
-        // Store sanitized plan in Firestore
+        // Store structured plan in Firestore under its Product document
         const db = admin.firestore();
-        const docRef = db.collection(config.productsCollectionPath).doc(plan.id);
-        const sanitizedPlan = sanitizePlan(plan);
+        const productId = generateProductId(plan);
+        const planKey = generatePlanKey(plan);
+        const docRef = db.collection(config.productsCollectionPath).doc(productId);
 
-        await docRef.set(sanitizedPlan, { merge: true });
+        const productSnap = await docRef.get();
+        const productData = productSnap.data() || {
+            id: productId,
+            name: plan.item?.name || 'Razorpay Product',
+            description: plan.item?.description || '',
+            active: true,
+            allowedPlans: {},
+            created_at: admin.firestore.FieldValue.serverTimestamp(),
+        };
 
-        logs.info(`Admin created plan: ${plan.id}`);
-        return sanitizedPlan;
+        productData.allowedPlans = productData.allowedPlans || {};
+        productData.allowedPlans[planKey] = plan.id;
+        
+        productData.plans = productData.plans || {};
+        productData.plans[planKey] = sanitizePlan(plan);
+
+        productData.updated_at = admin.firestore.FieldValue.serverTimestamp();
+        productData._synced_via = 'admin_api';
+
+        await docRef.set(productData, { merge: true });
+
+        logs.info(`Admin created plan: ${plan.id} and synced to product: ${productId}`);
+        return productData;
     } catch (err: any) {
         logs.error(err);
-        throw new functions.https.HttpsError('internal', 'Failed to create plan.', err.message);
+        throw new HttpsError('internal', 'Failed to create plan.', err.message);
     }
 });
 
 // ---------- Admin: Sync All Plans ----------
-export const syncPlans = functions.https.onCall(async (data, context) => {
+export const syncPlans = onCall(async (request) => {
     // 1. Verify Admin Auth
-    if (!context.auth || (context.auth.token.admin !== true && context.auth.token.role !== 'admin')) {
-        throw new functions.https.HttpsError(
+    if (!request.auth || request.auth.token.admin !== true) {
+        throw new HttpsError(
             'permission-denied',
             'Must be an administrative user to initiate plan sync.'
         );
@@ -95,10 +94,30 @@ export const syncPlans = functions.https.onCall(async (data, context) => {
             }
 
             for (const plan of plans.items) {
-                const docRef = db.collection(config.productsCollectionPath).doc(plan.id);
-                const sanitizedPlan = sanitizePlan(plan);
+                const productId = generateProductId(plan);
+                const planKey = generatePlanKey(plan);
+                const docRef = db.collection(config.productsCollectionPath).doc(productId);
 
-                await docRef.set(sanitizedPlan, { merge: true });
+                const productSnap = await docRef.get();
+                const productData = productSnap.data() || {
+                    id: productId,
+                    name: plan.item?.name || 'Razorpay Product',
+                    description: plan.item?.description || '',
+                    active: true,
+                    allowedPlans: {},
+                    created_at: admin.firestore.FieldValue.serverTimestamp(),
+                };
+
+                productData.allowedPlans = productData.allowedPlans || {};
+                productData.allowedPlans[planKey] = plan.id;
+
+                productData.plans = productData.plans || {};
+                productData.plans[planKey] = sanitizePlan(plan);
+
+                productData.updated_at = admin.firestore.FieldValue.serverTimestamp();
+                productData._synced_via = 'admin_api';
+
+                await docRef.set(productData, { merge: true });
                 syncedCount++;
             }
 
@@ -112,6 +131,6 @@ export const syncPlans = functions.https.onCall(async (data, context) => {
         return { status: 'SUCCESS', count: syncedCount };
     } catch (err: any) {
         logs.error(err);
-        throw new functions.https.HttpsError('internal', 'Sync failed.', err.message);
+        throw new HttpsError('internal', 'Sync failed.', err.message);
     }
 });

@@ -51,7 +51,7 @@ During installation, you'll configure:
 
 ### Create a one-time payment
 
-Write a document to the `checkout_sessions` subcollection:
+Write a document to the `checkout_sessions` subcollection with a `productId`:
 
 ```javascript
 const docRef = await firebase.firestore()
@@ -59,9 +59,8 @@ const docRef = await firebase.firestore()
   .doc(userId)
   .collection('checkout_sessions')
   .add({
-    amount: 50000,      // Amount in paise (₹500.00)
-    currency: 'INR',
-    receipt: `order_${Date.now()}`,
+    productId: 'prod_premium_shoes', // ID of the product in your products collection
+    currency: 'INR'
   });
 
 // Listen for the order creation
@@ -81,8 +80,8 @@ await firebase.firestore()
   .doc(userId)
   .collection('subscriptions')
   .add({
-    plan_id: 'plan_XXXXXXXXXXXXX',
-    total_count: 12,
+    productId: 'prod_premium_membership', // Allowed product ID
+    interval: 'monthly', // Billing interval
   });
 ```
 

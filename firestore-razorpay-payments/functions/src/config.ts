@@ -13,9 +13,6 @@ export default {
     // CORS: comma-separated list of allowed origins for authenticated endpoints
     // Leave empty to allow all origins (not recommended for production)
     get allowedOrigins() { return process.env.ALLOWED_ORIGINS || ''; },
-
-    // Dedup event TTL in days (events older than this are eligible for cleanup)
-    get dedupTtlDays() { return parseInt(process.env.DEDUP_TTL_DAYS || '7', 10); },
 };
 
 /**

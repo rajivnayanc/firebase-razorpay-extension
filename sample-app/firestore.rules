@@ -1,8 +1,72 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    // ── Products / Plans Catalog ──
+    // Read-only for all users. Only the extension (Admin SDK) and admin
+    // callable functions can write here.
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if false;
     }
+
+    // ── Customer Documents ──
+    match /customers/{uid} {
+      // Users can only read their own customer document.
+      // They should NOT be able to write to the root customer doc
+      // (razorpay_customer_id is set by the extension).
+      allow read: if request.auth.uid == uid;
+      allow write: if false;
+
+      // ── Checkout Sessions (One-time Orders) ──
+      match /checkout_sessions/{id} {
+        allow read: if request.auth.uid == uid;
+
+        // Users can create a checkout session, but:
+        //  - Cannot supply their own 'amount' (server-side lookup from products)
+        //  - Cannot supply 'order_id' or 'status' (set by extension)
+        //  - Must supply a 'productId'
+        allow create: if request.auth.uid == uid
+          && !("amount" in request.resource.data)
+          && !("order_id" in request.resource.data)
+          && !("status" in request.resource.data)
+          && !("currency" in request.resource.data)
+          && ("productId" in request.resource.data);
+
+        // Only the extension (Admin SDK) updates checkout sessions
+        allow update, delete: if false;
+      }
+
+      // ── Subscriptions ──
+      match /subscriptions/{id} {
+        allow read: if request.auth.uid == uid;
+
+        // Users can create a subscription request, but:
+        //  - Cannot supply their own 'plan_id' (resolved server-side from product)
+        //  - Cannot supply 'subscription_id' or 'status'
+        //  - Cannot supply 'customer_id' (fetched from their customer doc)
+        //  - Must supply 'productId' and 'interval'
+        allow create: if request.auth.uid == uid
+          && !("plan_id" in request.resource.data)
+          && !("subscription_id" in request.resource.data)
+          && !("status" in request.resource.data)
+          && !("customer_id" in request.resource.data)
+          && !("total_count" in request.resource.data)
+          && ("productId" in request.resource.data)
+          && ("interval" in request.resource.data);
+
+        // Only the extension (Admin SDK) updates subscriptions
+        allow update, delete: if false;
+
+        // Payment sub-documents under subscriptions
+        match /payments/{paymentId} {
+          allow read: if request.auth.uid == uid;
+          allow write: if false;
+        }
+      }
+    }
+
+    // ── Deny everything else by default ──
+    // No wildcard match — unlisted paths are denied
   }
 }

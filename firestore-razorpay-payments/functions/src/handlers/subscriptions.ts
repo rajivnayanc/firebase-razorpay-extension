@@ -5,27 +5,63 @@ import { logs } from '../logs';
 import { getRazorpay } from '../api';
 
 /**
- * Manage custom claims updates sequentially.
+ * Derive and sync custom claims from ALL active subscriptions.
+ *
+ * Instead of incremental set/remove (which is subject to race conditions
+ * and lost-update problems with concurrent webhooks), we query the full
+ * subscription state and compute the complete claims map.
+ *
+ * This is idempotent — concurrent executions converge to the same result
+ * because they derive claims from the same committed Firestore state.
  */
-async function manageCustomClaims(
+export async function syncCustomClaims(
     uid: string,
-    operation: 'set' | 'remove',
-    role: string
+    db: admin.firestore.Firestore
 ): Promise<void> {
     try {
-        const userRec = await admin.auth().getUser(uid);
-        const currentClaims = { ...(userRec.customClaims || {}) };
+        // 1. Query all subscriptions for the user
+        const allSubs = await db
+            .collection(config.customersCollectionPath)
+            .doc(uid)
+            .collection('subscriptions')
+            .get();
 
-        if (operation === 'set') {
-            currentClaims[role] = true;
-        } else if (operation === 'remove') {
-            delete currentClaims[role];
+        // 2. Collect roles from active/authenticated subs and track all known roles
+        const activeRoles = new Set<string>();
+        const allKnownRoles = new Set<string>();
+
+        for (const doc of allSubs.docs) {
+            const data = doc.data();
+            const role = data.notes?.firebaseRole
+                || data.razorpay_notes_firebaseRole
+                || data.firebaseRole;
+            if (role && typeof role === 'string') {
+                allKnownRoles.add(role);
+                if (data.status === 'active' || data.status === 'authenticated') {
+                    activeRoles.add(role);
+                }
+            }
         }
 
-        await admin.auth().setCustomUserClaims(uid, currentClaims);
+        // 3. Read existing claims, preserve non-subscription claims (e.g. 'admin')
+        const userRec = await admin.auth().getUser(uid);
+        const existingClaims = userRec.customClaims || {};
+
+        const finalClaims: Record<string, any> = {};
+        for (const [key, value] of Object.entries(existingClaims)) {
+            if (!allKnownRoles.has(key)) {
+                finalClaims[key] = value;
+            }
+        }
+        for (const role of activeRoles) {
+            finalClaims[role] = true;
+        }
+
+        await admin.auth().setCustomUserClaims(uid, finalClaims);
+        logs.info(`Synced claims for ${uid}: [${Object.keys(finalClaims).join(', ')}]`);
     } catch (error) {
         // User might have been deleted mid-flight, simply ignore
-        logs.error(new Error(`Failed to update claims for ${uid}: ${error}`));
+        logs.error(new Error(`Failed to sync claims for ${uid}: ${error}`));
     }
 }
 
@@ -99,49 +135,58 @@ export const handleSubscriptionEvent = async (event: any) => {
             // We can continue with the subscription update even if payment fetch fails
         }
     }
-
     try {
+        const role = subscriptionEntity.notes?.firebaseRole ? String(subscriptionEntity.notes?.firebaseRole) : undefined;
         let shouldSetClaims = false;
         let shouldRemoveClaims = false;
 
-        // Ensure we handle claims based on the fetched status
         if (newStatus === 'active' || newStatus === 'authenticated') {
             shouldSetClaims = true;
         } else if (newStatus === 'cancelled' || newStatus === 'halted' || newStatus === 'paused' || newStatus === 'completed') {
             shouldRemoveClaims = true;
         }
 
-        // Manage Custom Claims BEFORE the transaction
-        const role = subscriptionEntity.notes?.firebaseRole ? String(subscriptionEntity.notes?.firebaseRole) : undefined;
-        if (role && shouldSetClaims) {
-            await manageCustomClaims(uid, 'set', role);
-        } else if (role && shouldRemoveClaims) {
-            await manageCustomClaims(uid, 'remove', role);
-        }
-
         // Write atomically
-        const dataToWrite = {
-            ...subscriptionEntity,
+        const dataToWrite: any = {
+            subscription_id: subscriptionEntity.id,
+            plan_id: subscriptionEntity.plan_id,
             status: newStatus,
+            current_start: subscriptionEntity.current_start,
+            current_end: subscriptionEntity.current_end,
+            total_count: subscriptionEntity.total_count,
+            paid_count: subscriptionEntity.paid_count,
+            remaining_count: subscriptionEntity.remaining_count,
+            charge_at: subscriptionEntity.charge_at,
+            short_url: subscriptionEntity.short_url,
             updated_at: FieldValue.serverTimestamp(),
         };
 
         const batch = db.batch();
         batch.set(docRef, dataToWrite, { merge: true });
 
-        // Record payment history if we fetched a payment
         if (paymentEntity) {
             const paymentRef = docRef.collection('payments').doc(paymentEntity.id);
             batch.set(paymentRef, {
-                ...paymentEntity,
+                payment_id: paymentEntity.id,
+                amount: (paymentEntity as any).amount,
+                currency: (paymentEntity as any).currency,
+                status: (paymentEntity as any).status,
+                method: (paymentEntity as any).method,
+                order_id: (paymentEntity as any).order_id,
                 updated_at: FieldValue.serverTimestamp(),
             }, { merge: true });
         }
-
+        
         await batch.commit();
+
+        // Sync Custom Claims AFTER the atomic commit succeeds
+        if (role && (shouldSetClaims || shouldRemoveClaims)) {
+            await syncCustomClaims(uid, db);
+        }
 
         logs.webhookProcessed(event.event, subscriptionEntity.id);
     } catch (error: any) {
         logs.error(error);
+        throw error; // Let api.ts catch and handle it for retries
     }
 };
