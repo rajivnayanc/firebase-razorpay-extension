@@ -75,6 +75,11 @@ export const onCustomerDataDeleted = onDocumentDeleted(
  * corresponding Razorpay entity and active subscriptions are wiped.
  */
 export const onUserDeleted = functions.auth.user().onDelete(async (user) => {
+    if (!config.syncCustomers) {
+        logs.info(`Customer sync disabled. Skipping automatic cleanup for user: ${user.uid}`);
+        return;
+    }
+
     try {
         logs.info(`User ${user.uid} deleted from Auth. Initiating Razorpay cleanup.`);
 

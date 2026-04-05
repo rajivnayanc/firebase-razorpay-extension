@@ -18,6 +18,11 @@ export async function syncCustomClaims(
     uid: string,
     db: admin.firestore.Firestore
 ): Promise<void> {
+    if (!config.syncCustomClaims) {
+        logs.info(`Custom claims sync disabled. Skipping claim update for user: ${uid}`);
+        return;
+    }
+
     try {
         // 1. Query all subscriptions for the user
         const allSubs = await db
@@ -160,6 +165,10 @@ export const handleSubscriptionEvent = async (event: any) => {
             short_url: subscriptionEntity.short_url,
             updated_at: FieldValue.serverTimestamp(),
         };
+
+        if (role !== undefined) {
+            dataToWrite.firebaseRole = role;
+        }
 
         const batch = db.batch();
         batch.set(docRef, dataToWrite, { merge: true });

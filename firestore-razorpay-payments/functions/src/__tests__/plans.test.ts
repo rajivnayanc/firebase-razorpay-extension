@@ -1,5 +1,9 @@
 import { createPlan, syncPlans } from '../admin';
 
+jest.mock('firebase-admin/firestore', () => ({
+    FieldValue: { serverTimestamp: jest.fn(() => 'server_time') }
+}));
+
 let mockCustomClaims = {};
 
 // Mock the whole firebase-admin module to avoid initializing it
@@ -18,6 +22,8 @@ jest.mock('firebase-admin', () => {
     };
 
     return {
+        apps: [],
+        initializeApp: jest.fn(),
         firestore: Object.assign(jest.fn(() => firestoreMock), {
             FieldValue: { serverTimestamp: jest.fn(() => 'server_time') }
         }),
@@ -67,7 +73,7 @@ describe('Admin Plan Management (Callable Functions)', () => {
         const context: any = { auth: { token: { admin: true } } };
 
         const result: any = await createPlan.run({ data, auth: context.auth } as any);
-        expect(result.id).toBe('newplan');
+        expect(result.id).toBe('newplan'); // Matches current implementation's output
         expect(result.allowedPlans['monthly']).toBe('plan_new123');
     });
 

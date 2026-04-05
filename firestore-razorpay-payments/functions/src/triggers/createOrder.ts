@@ -118,7 +118,12 @@ export const createOrderHandler = async (event: any) => {
         try {
             const existingOrders = await getRazorpay().orders.all({ receipt });
             const matchingOrder = existingOrders?.items?.find(
-                (o: Orders.RazorpayOrder) => o.receipt === receipt && (o.status === 'created' || o.status === 'paid')
+                (o: Orders.RazorpayOrder) =>
+                    o.receipt === receipt &&
+                    (o.status === 'created' || o.status === 'paid') &&
+                    o.amount === orderAmount &&
+                    o.currency === orderCurrency &&
+                    o.notes?.productId === currentData.productId
             );
 
             if (matchingOrder) {

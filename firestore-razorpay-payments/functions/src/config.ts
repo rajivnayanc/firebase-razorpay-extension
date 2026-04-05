@@ -13,6 +13,10 @@ export default {
     // CORS: comma-separated list of allowed origins for authenticated endpoints
     // Leave empty to allow all origins (not recommended for production)
     get allowedOrigins() { return process.env.ALLOWED_ORIGINS || ''; },
+
+    // Automated Sync Toggles
+    get syncCustomers() { return process.env.SYNC_CUSTOMERS !== 'false'; },
+    get syncCustomClaims() { return process.env.SYNC_CUSTOM_CLAIMS !== 'false'; },
 };
 
 /**

@@ -237,6 +237,34 @@ params:
       separated by slashes, e.g. "path/to/collection".
     required: true
 
+  - param: SYNC_CUSTOMERS
+    label: Synchronize customers with Razorpay
+    description: >-
+      If enabled, the extension will automatically create a Razorpay Customer
+      for every new Firebase Auth user, and clean up subscriptions upon deletion.
+    type: select
+    options:
+      - label: Enabled
+        value: "true"
+      - label: Disabled
+        value: "false"
+    default: "true"
+    required: true
+
+  - param: SYNC_CUSTOM_CLAIMS
+    label: Synchronize custom claims (roles)
+    description: >-
+      If enabled, the extension will update Firebase Auth custom claims with the
+      role associated with the product upon successful subscription.
+    type: select
+    options:
+      - label: Enabled
+        value: "true"
+      - label: Disabled
+        value: "false"
+    default: "true"
+    required: true
+
 
 events:
   - type: com.razorpay.v1.order.paid

@@ -26,6 +26,7 @@ jest.mock('razorpay', () => {
                 return Promise.resolve({
                     id: 'sub_123',
                     status: 'created',
+                    plan_id: options.plan_id,
                     short_url: 'https://rzp.io/s/test',
                 });
             })
@@ -145,10 +146,10 @@ describe('Firestore Trigger: createSubscription', () => {
     });
 
     it('Behavior: should REJECT missing plan_id (server-side validation)', async () => {
-        mockSnap.data = () => ({ productId: 'prod_123', interval: 'monthly', amount: 500 }); // Missing plan_id allowed in input, but resolved to empty
+        mockSnap.data = () => ({ productId: 'prod_123', interval: 'monthly' }); 
         const mockSnapGet = jest.fn()
             .mockResolvedValueOnce({ exists: true, data: () => ({ razorpay_customer_id: 'cust_123' }) })
-            .mockResolvedValueOnce({ exists: true, data: () => ({ amount: 500 }) });
+            .mockResolvedValueOnce({ exists: true, data: () => ({ amount: 500 }) }); // No planId or allowedPlans
         require('firebase-admin').firestore.mockImplementation(() => ({
             collection: jest.fn().mockReturnThis(),
             doc: jest.fn().mockReturnThis(),
@@ -165,37 +166,38 @@ describe('Firestore Trigger: createSubscription', () => {
         expect(mockSnap.ref.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: 'failed',
-                error: expect.stringContaining('The selected plan is not available') // Now the error text changed: "No plan for interval..." or similar, depending on the sanitize update.
+                error: expect.stringContaining('configuration is invalid or missing')
             })
         );
     });
 
-    it('Behavior: should safely reject non-string or oversized required fields (Input Fuzzing)', async () => {
-        const testCases = [
-            { productId: 12345, interval: 'monthly' }, // Number productId
-            { productId: 'prod_1', interval: { sql: 'injection' } }, // Object interval
-            { productId: 'a'.repeat(300), interval: 'monthly' }, // Oversized string
-            { productId: 'prod_1', interval: 'a'.repeat(70) } // Oversized string
-        ];
-
+    it('Behavior: should resolve automatically if product has exactly one plan', async () => {
+        mockSnap.data = () => ({ productId: 'prod_one_plan' }); // No interval provided
         const mockSnapGet = jest.fn()
-            .mockResolvedValue({ exists: true, data: () => ({ razorpay_customer_id: 'cust_123' }) });
-        require('firebase-admin').firestore.mockImplementation(() => ({
+            .mockResolvedValueOnce({ exists: true, data: () => ({ razorpay_customer_id: 'cust_123' }) })
+            .mockResolvedValueOnce({ exists: true, data: () => ({ allowedPlans: { '3_months': 'plan_auto_123' } }) });
+        
+        const firestoreMock = {
             collection: jest.fn().mockReturnThis(),
             doc: jest.fn().mockReturnThis(),
             get: mockSnapGet,
-        }));
+            runTransaction: jest.fn(async (fn: any) => fn({
+                get: jest.fn().mockResolvedValue(mockSnap),
+                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
+                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
+            })),
+        };
+        require('firebase-admin').firestore.mockImplementation(() => firestoreMock);
+        
+        await createSubscriptionHandler({
+            data: mockSnap,
+            params: { customers_collection: 'customers', uid: 'user1', id: 'sub1' }
+        } as any);
 
-        for (const testCase of testCases) {
-            const tempSnap = { data: () => testCase, ref: { update: jest.fn().mockResolvedValue({}) } };
-            const mockEvent = { data: tempSnap, params: { customers_collection: 'customers', uid: 'user1', id: 'sub1' } };
-            
-            await createSubscriptionHandler(mockEvent as any);
-            
-            expect(tempSnap.ref.update).toHaveBeenCalledWith(
-                expect.objectContaining({ status: 'failed', error: expect.stringContaining('valid strings') })
-            );
-        }
+        expect(mockSnap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
+            plan_id: 'plan_auto_123',
+            status: 'created'
+        }));
     });
 
     it('Behavior: should REJECT if plan_id does not exist in synced plans', async () => {

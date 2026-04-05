@@ -1,4 +1,10 @@
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
+
+// Initialize Firebase Admin if not already initialized
+if (!admin.apps.length) {
+    admin.initializeApp();
+}
 
 /**
  * Helper to sanitize Razorpay plan data for Firestore storage.
@@ -13,7 +19,7 @@ export const sanitizePlan = (plan: any) => {
         notes: plan.notes || {},
         active: true, // Plans don't return an active boolean at the top level
         created_at: plan.created_at,
-        updated_at: admin.firestore.FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
         _synced_via: 'admin_api'
     };
 

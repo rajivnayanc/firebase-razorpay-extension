@@ -12,6 +12,11 @@ if (!admin.apps.length) {
 
 export const createCustomer = functions.auth.user().onCreate(
     async (user): Promise<void> => {
+        if (!config.syncCustomers) {
+            logs.info(`Customer sync disabled. Skipping Razorpay customer creation for user: ${user.uid}`);
+            return;
+        }
+
         try {
             logs.info(`Creating Razorpay customer for new user: ${user.uid}`);
 

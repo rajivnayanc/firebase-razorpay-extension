@@ -56,15 +56,6 @@ export const createSubscriptionHandler = async (event: any) => {
         return;
     }
 
-    if (!currentData.productId || typeof currentData.productId !== 'string' || currentData.productId.length > 256 ||
-        !currentData.interval || typeof currentData.interval !== 'string' || currentData.interval.length > 64) {
-        await snap.ref.update({
-            status: 'failed',
-            error: 'Missing or invalid required fields: productId and interval must be valid strings.',
-        });
-        return;
-    }
-
     // Securely fetch the product document to get the assigned firebaseRole and planId
     const productRef = db.collection(config.productsCollectionPath).doc(currentData.productId);
     const productDoc = await productRef.get();
@@ -79,14 +70,29 @@ export const createSubscriptionHandler = async (event: any) => {
     }
 
     const productData = productDoc.data() || {};
-    const allowedPlans = productData.allowedPlans || {};
-    const planId = allowedPlans[currentData.interval];
+    let planId = productData.planId;
+
+    // If no direct planId, fall back to interval-based lookup
+    if (!planId) {
+        const allowedPlans = productData.allowedPlans || {};
+        const interval = currentData.interval;
+
+        if (interval && allowedPlans[interval]) {
+            planId = allowedPlans[interval];
+        } else {
+            // If the product only has one allowed plan, use it automatically
+            const planKeys = Object.keys(allowedPlans);
+            if (planKeys.length === 1) {
+                planId = allowedPlans[planKeys[0]];
+            }
+        }
+    }
 
     if (!planId) {
-        logs.error(new Error(`No plan for interval '${currentData.interval}' on product '${currentData.productId}'.`));
+        logs.error(new Error(`No planId resolved for product '${currentData.productId}' (Interval: ${currentData.interval}).`));
         await snap.ref.update({
             status: 'failed',
-            error: 'The selected plan is not available.',
+            error: 'The selected plan configuration is invalid or missing.',
         });
         return;
     }
@@ -158,6 +164,7 @@ export const createSubscriptionHandler = async (event: any) => {
             remaining_count: subscription.remaining_count,
             charge_at: subscription.charge_at,
             created_at: FieldValue.serverTimestamp(),
+            firebaseRole: secureRole,
         });
 
     } catch (error: any) {

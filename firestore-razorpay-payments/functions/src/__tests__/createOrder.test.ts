@@ -262,7 +262,14 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
         const { getRazorpay } = require('../api');
         const razorpayMock = getRazorpay();
         razorpayMock.orders.all.mockResolvedValueOnce({
-            items: [{ id: 'order_reused', receipt: 'session1', status: 'created' }]
+            items: [{ 
+                id: 'order_reused', 
+                receipt: 'session1', 
+                status: 'created',
+                amount: 50000,
+                currency: 'INR',
+                notes: { productId: 'prod_123' }
+            }]
         });
 
         const mockEvent = {

@@ -1,9 +1,15 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getRazorpay } from './api';
 import config from './config';
 import { logs } from './logs';
 import { sanitizePlan, generateProductId, generatePlanKey } from './utils';
+
+// Initialize Firebase Admin if not already initialized
+if (!admin.apps.length) {
+    admin.initializeApp();
+}
 
 // ---------- Admin: Create Plan ----------
 export const createPlan = onCall(async (request) => {
@@ -46,7 +52,7 @@ export const createPlan = onCall(async (request) => {
             description: plan.item?.description || '',
             active: true,
             allowedPlans: {},
-            created_at: admin.firestore.FieldValue.serverTimestamp(),
+            created_at: FieldValue.serverTimestamp(),
         };
 
         productData.allowedPlans = productData.allowedPlans || {};
@@ -55,7 +61,8 @@ export const createPlan = onCall(async (request) => {
         productData.plans = productData.plans || {};
         productData.plans[planKey] = sanitizePlan(plan);
 
-        productData.updated_at = admin.firestore.FieldValue.serverTimestamp();
+        productData.type = 'subscription';
+        productData.updated_at = FieldValue.serverTimestamp();
         productData._synced_via = 'admin_api';
 
         await docRef.set(productData, { merge: true });
@@ -105,7 +112,7 @@ export const syncPlans = onCall(async (request) => {
                     description: plan.item?.description || '',
                     active: true,
                     allowedPlans: {},
-                    created_at: admin.firestore.FieldValue.serverTimestamp(),
+                    created_at: FieldValue.serverTimestamp(),
                 };
 
                 productData.allowedPlans = productData.allowedPlans || {};
@@ -114,7 +121,8 @@ export const syncPlans = onCall(async (request) => {
                 productData.plans = productData.plans || {};
                 productData.plans[planKey] = sanitizePlan(plan);
 
-                productData.updated_at = admin.firestore.FieldValue.serverTimestamp();
+                productData.type = 'subscription';
+                productData.updated_at = FieldValue.serverTimestamp();
                 productData._synced_via = 'admin_api';
 
                 await docRef.set(productData, { merge: true });
