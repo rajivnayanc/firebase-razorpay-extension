@@ -1,0 +1,1 @@
+# Tell GitHub Pages not to run Jekyll on this directory. This ensures files starting with an underscore (like _sidebar.md) are served properly.
