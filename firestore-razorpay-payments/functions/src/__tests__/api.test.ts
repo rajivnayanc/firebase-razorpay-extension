@@ -130,6 +130,14 @@ describe('Webhook API', () => {
 
         expect(res.status).toHaveBeenCalledWith(200);
         expect(res.send).toHaveBeenCalledWith('Webhook Processed');
+
+        // Verify that the webhook event is created with the 7-day TTL field
+        const admin = require('firebase-admin');
+        expect(admin.firestore().create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                expireAt: expect.any(Date),
+            })
+        );
     });
 
     it('Behavior: should reject non-POST requests', async () => {

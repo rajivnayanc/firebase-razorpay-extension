@@ -113,11 +113,13 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
 
     const webhookEventRef = db.collection('webhook_events').doc(eventId);
     try {
+        const expireAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
         await webhookEventRef.create({
             event: event.event,
             status: 'processing',
             created_at: FieldValue.serverTimestamp(),
             updated_at: FieldValue.serverTimestamp(),
+            expireAt,
         });
     } catch (e: any) {
         if (e.code === 6) { // ALREADY_EXISTS in gRPC / Firestore

@@ -117,6 +117,28 @@ if (matchingOrder) {
 
 ---
 
+## 🧹 5. Time-To-Live (TTL) & Database Storage Optimization
+
+To prevent the `webhook_events` collection from growing indefinitely and incurring high Firestore storage costs, the extension automatically includes an `expireAt` timestamp field on every webhook event document. This timestamp is set to exactly 7 days after the event was processed (which matches the maximum window for Razorpay's retry policy).
+
+### 🛠️ Setting Up Firestore TTL Exemption
+
+To enable automatic purging of old webhook event logs:
+1. Open the [Firebase Console](https://console.firebase.google.com/) or [Google Cloud Console](https://console.cloud.google.com/).
+2. Navigate to **Firestore Database** -> **Indexes** tab.
+3. Click the **Single Field** indexes tab, then click **Add Exemption**.
+4. Set the **Collection Group** to `webhook_events`.
+5. Set the **Field Path** to `expireAt`.
+6. Enable **Time-to-Live (TTL)**.
+7. Click **Save** to apply the exemption.
+
+Alternatively, you can enable the TTL policy using the Google Cloud CLI:
+```bash
+gcloud firestore fields update expireAt --collection-group=webhook_events --enable-ttl
+```
+
+---
+
 ## ⚡ Next Steps
 
 For production readiness, proceed to **[07. Firestore Security Rules](./07-security-rules.md)** to secure your data fields from unauthorized client reads and writes.
