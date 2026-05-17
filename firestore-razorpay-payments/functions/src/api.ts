@@ -9,6 +9,7 @@ import { logs } from './logs';
 
 import { handleSubscriptionEvent } from './handlers/subscriptions';
 import { handlePaymentEvent } from './handlers/payments';
+import { isTransientError } from './utils/retry';
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
@@ -191,7 +192,7 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         logs.error(`Webhook processing failed for event: ${event.event} (ID: ${eventId})`, err);
 
         // Return 500 for transient/retryable errors to allow Razorpay webhook retries
-        const isRetryable = err.code === 'DEADLINE_EXCEEDED' || err.code === 'UNAVAILABLE' || err.message?.includes('timeout') || err.message?.includes('network');
+        const isRetryable = isTransientError(err);
 
         if (isRetryable) {
             // This allows the next retry to acquire the lock via transaction, while

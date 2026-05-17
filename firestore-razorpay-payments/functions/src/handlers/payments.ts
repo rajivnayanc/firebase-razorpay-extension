@@ -6,7 +6,7 @@ import { Payments } from 'razorpay/dist/types/payments';
 import config from '../config';
 import { logs } from '../logs';
 import { WebhookEvent } from '../api';
-import { fetchWithBackoff } from '../utils/retry';
+import { fetchWithBackoff, isTransientError } from '../utils/retry';
 
 export const handlePaymentEvent = async (event: WebhookEvent, db: admin.firestore.Firestore, razorpayClient: InstanceType<typeof Razorpay>) => {
     const webhookPaymentId = event.payload.payment?.entity?.id || event.payload.payment?.id;
@@ -36,7 +36,10 @@ export const handlePaymentEvent = async (event: WebhookEvent, db: admin.firestor
         }
     } catch (err: any) {
         logs.error(new Error(`Failed to fetch entity from Razorpay API. Event: ${event.event}. Error: ${err.message}`));
-        return;
+        if (isTransientError(err)) {
+            throw err; // Rethrow to signal api.ts to return a 500
+        }
+        return; // Don't throw for permanent errors (like 404), skip processing
     }
 
     if (!fetchedEntity) {

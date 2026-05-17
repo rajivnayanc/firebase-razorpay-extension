@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { webhookHandlerFunc } from '../api';
+import { webhookHandlerFunc, getRazorpay } from '../api';
 import * as configModule from '../config';
 
 jest.mock('../config', () => ({
@@ -559,5 +559,67 @@ describe('Webhook API', () => {
         // Second request should be marked as already processed
         expect(res2.status).toHaveBeenCalledWith(200);
         expect(res2.send).toHaveBeenCalledWith('Already Processed');
+    });
+
+    it('should propagate a transient error (e.g., 502 Bad Gateway) to return 500 for webhook retries', async () => {
+        const razorpayApi = getRazorpay();
+        
+        // Mock a transient error on fetch
+        const transientError = new Error('Bad Gateway');
+        (transientError as any).statusCode = 502;
+        (razorpayApi.payments.fetch as jest.Mock).mockRejectedValueOnce(transientError);
+
+        const admin = require('firebase-admin');
+        const firestoreMock = admin.firestore();
+        firestoreMock.create.mockResolvedValueOnce({});
+
+        const req: any = {
+            method: 'POST',
+            body: payload,
+            rawBody: Buffer.from(payloadStr),
+            headers: { 'x-razorpay-signature': signature }
+        };
+        const res: any = {
+            status: jest.fn().mockReturnThis(),
+            send: jest.fn(),
+        };
+
+        await webhookHandlerFunc(req, res);
+
+        // Should update lock status to failed and return 500 for retry
+        expect(firestoreMock.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
+        expect(res.status).toHaveBeenCalledWith(500);
+        expect(res.send).toHaveBeenCalledWith('Webhook processing failed internally - retryable');
+    });
+
+    it('should suppress a permanent error (e.g., 404 Not Found) and return 200 acknowledging processing', async () => {
+        const razorpayApi = getRazorpay();
+        
+        // Mock a permanent error on fetch
+        const permanentError = new Error('Not Found');
+        (permanentError as any).statusCode = 404;
+        (razorpayApi.payments.fetch as jest.Mock).mockRejectedValueOnce(permanentError);
+
+        const admin = require('firebase-admin');
+        const firestoreMock = admin.firestore();
+        firestoreMock.create.mockResolvedValueOnce({});
+
+        const req: any = {
+            method: 'POST',
+            body: payload,
+            rawBody: Buffer.from(payloadStr),
+            headers: { 'x-razorpay-signature': signature }
+        };
+        const res: any = {
+            status: jest.fn().mockReturnThis(),
+            send: jest.fn(),
+        };
+
+        await webhookHandlerFunc(req, res);
+
+        // Should update lock status to completed (since failure is permanent) and return 200
+        expect(firestoreMock.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.send).toHaveBeenCalledWith('Webhook Processed');
     });
 });

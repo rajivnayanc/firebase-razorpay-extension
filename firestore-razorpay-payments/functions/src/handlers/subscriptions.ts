@@ -4,7 +4,7 @@ import Razorpay from 'razorpay';
 import config from '../config';
 import { logs } from '../logs';
 import { WebhookEvent } from '../api';
-import { fetchWithBackoff } from '../utils/retry';
+import { fetchWithBackoff, isTransientError } from '../utils/retry';
 
 /**
  * Incrementally sync custom claims based on the Razorpay API response.
@@ -57,7 +57,10 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
         subscriptionEntity = await fetchWithBackoff(() => razorpayClient.subscriptions.fetch(webhookSubscription.id));
     } catch (err: any) {
         logs.error(new Error(`Failed to fetch subscription from Razorpay API: ${webhookSubscription.id}. Error: ${err.message}`));
-        return; // Don't throw to retry, if it's 404 or permanent, we skip
+        if (isTransientError(err)) {
+            throw err; // Rethrow to signal api.ts to return 500
+        }
+        return; // Don't throw for permanent errors (like 404), skip processing
     }
 
     const uid = String(subscriptionEntity.notes?.uid);
@@ -84,7 +87,10 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
             paymentEntity = await fetchWithBackoff(() => razorpayClient.payments.fetch(webhookPayment.id));
         } catch (err: any) {
             logs.error(new Error(`Failed to fetch payment from Razorpay API: ${webhookPayment.id}. Error: ${err.message}`));
-            // We can continue with the subscription update even if payment fetch fails
+            if (isTransientError(err)) {
+                throw err; // Rethrow to allow retry
+            }
+            // We can continue with the subscription update even if payment fetch fails permanently
         }
     }
     
