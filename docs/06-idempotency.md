@@ -96,26 +96,7 @@ If the document has been in `processing` for more than 2 minutes, it assumes a c
 
 ---
 
-## 💳 4. Receipt-Based Double Payment Prevention
 
-Even with concurrency locks, a request can sometimes be successfully processed by Razorpay, but the server response drops before saving the Order ID to Firestore.
-
-To handle this, when the trigger wakes up, it uses the Firestore Checkout Session ID as a **Receipt Parameter** to query the Razorpay API before calling the creation endpoint:
-
-```typescript
-const receipt = sessionId.substring(0, 40);
-const existingOrders = await razorpay.orders.all({ receipt });
-
-const matchingOrder = existingOrders?.items?.find(o => o.receipt === receipt);
-if (matchingOrder) {
-    // REUSE the existing order rather than creating a duplicate on Razorpay
-    order = matchingOrder;
-} else {
-    order = await razorpay.orders.create({ ... });
-}
-```
-
----
 
 ## 🧹 5. Time-To-Live (TTL) & Database Storage Optimization
 

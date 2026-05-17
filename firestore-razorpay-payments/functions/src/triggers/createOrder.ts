@@ -137,55 +137,25 @@ export const createOrderHandler = async (event: any) => {
         // If a previous attempt created an order with this receipt, reuse it
         // Ensure receipt is max 40 characters as required by Razorpay API
         const receipt = event.params.id.substring(0, 40);
+        // Create new Razorpay Order directly. 
+        // We rely on the Firestore transaction to prevent duplicate creations.
+        // If a zombie-lock expires and we retry, we may create an orphaned order, 
+        // which is financially safe as it remains unpaid.
         let order: Orders.RazorpayOrder;
+        
+        const options: Orders.RazorpayOrderCreateRequestBody = {
+            amount: orderAmount,
+            currency: orderCurrency,
+            receipt,
+            notes: {
+                uid: event.params.uid,
+                sessionId: event.params.id,
+                productId: currentData.productId,
+            },
+        };
 
-        try {
-            const existingOrders = await getRazorpay().orders.all({ receipt });
-            const matchingOrder = existingOrders?.items?.find(
-                (o: Orders.RazorpayOrder) =>
-                    o.receipt === receipt &&
-                    (o.status === 'created' || o.status === 'paid') &&
-                    o.amount === orderAmount &&
-                    o.currency === orderCurrency &&
-                    o.notes?.productId === currentData.productId
-            );
-
-            if (matchingOrder) {
-                // Reuse existing order instead of creating a duplicate
-                order = matchingOrder;
-                logs.orderCreated(order.id, `${snap.ref.path} (reused existing)`);
-            } else {
-                // Create new Razorpay Order
-                const options: Orders.RazorpayOrderCreateRequestBody = {
-                    amount: orderAmount,
-                    currency: orderCurrency,
-                    receipt,
-                    notes: {
-                        uid: event.params.uid,
-                        sessionId: event.params.id,
-                        productId: currentData.productId,
-                    },
-                };
-
-                order = await getRazorpay().orders.create(options);
-                logs.orderCreated(order.id, snap.ref.path);
-            }
-        } catch (fetchError: any) {
-            // If the receipt lookup fails, fall back to creating a new order
-            const options: Orders.RazorpayOrderCreateRequestBody = {
-                amount: orderAmount,
-                currency: orderCurrency,
-                receipt,
-                notes: {
-                    uid: event.params.uid,
-                    sessionId: event.params.id,
-                    productId: currentData.productId,
-                },
-            };
-
-            order = await getRazorpay().orders.create(options);
-            logs.orderCreated(order.id, snap.ref.path);
-        }
+        order = await getRazorpay().orders.create(options);
+        logs.orderCreated(order.id, snap.ref.path);
 
         await snap.ref.update({
             order_id: order.id,

@@ -56,28 +56,20 @@ When a new checkout session document is written, the `createOrder` Cloud Functio
 
 ---
 
-## 🛡️ 3. Receipt-Based Duplicate Check
+## 🛡️ 3. Duplicate Order Prevention
 
-In distributed networks, cloud triggers can fire multiple times, or client retries can create duplicate order records. To guarantee absolute idempotency, the extension uses **receipt-based duplicate checks** against Razorpay's API:
+In distributed networks, cloud triggers can fire multiple times, or rapid user clicks can execute multiple Cloud Functions. To guarantee absolute idempotency, the extension uses **Firestore Transactions** rather than making unoptimized list API calls.
+
+Because the document is locked under `status: 'processing'` within an atomic transaction block, only the first trigger to execute will acquire the lock. Any subsequent duplicate triggers will immediately exit.
+
+Once the single successful worker calls the Razorpay API, it securely creates a brand new order:
 
 ```typescript
-// Truncates checkout session ID to fit Razorpay's 40-character receipt limit
-const receipt = sessionId.substring(0, 40);
-
-// Look up existing orders under this receipt
-const existingOrders = await razorpay.orders.all({ receipt });
-const matchingOrder = existingOrders?.items?.find(
-  (o) => o.receipt === receipt && o.status === 'created'
-);
-
-if (matchingOrder) {
-  // Reuse existing Razorpay order ID to prevent double payments
-  order = matchingOrder;
-} else {
-  // Create a brand new order securely
-  order = await razorpay.orders.create({ amount, currency, receipt, notes });
-}
+// Create a brand new order securely
+order = await razorpay.orders.create({ amount, currency, receipt, notes });
 ```
+
+If the Cloud Function crashes *after* creating the order but *before* writing the `order_id` to Firestore, a 2-minute zombie-lock escape hatch allows a retry to run, which creates a *new* orphaned order. This is perfectly safe as the client never receives the original order ID and it remains unpaid.
 
 Once resolved, the function updates the Firestore checkout session document with the Razorpay order details:
 

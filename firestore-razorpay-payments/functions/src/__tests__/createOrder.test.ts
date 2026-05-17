@@ -27,8 +27,7 @@ jest.mock('razorpay', () => {
             create: jest.fn((options) => {
                 if (options.amount <= 0) throw new Error('Invalid amount');
                 return Promise.resolve({ id: 'order_123' });
-            }),
-            all: jest.fn().mockResolvedValue({ items: [] })
+            })
         }
     }));
 });
@@ -258,71 +257,5 @@ describe('Firestore Trigger: createOrder (with Transaction Lock)', () => {
         expect(mockSnap.ref.update).not.toHaveBeenCalled();
     });
 
-    it('Behavior: should reuse existing order if found via receipt', async () => {
-        const { getRazorpay } = require('../api');
-        const razorpayMock = getRazorpay();
-        razorpayMock.orders.all.mockResolvedValueOnce({
-            items: [{ 
-                id: 'order_reused', 
-                receipt: 'session1', 
-                status: 'created',
-                amount: 50000,
-                currency: 'INR',
-                notes: { productId: 'prod_123' }
-            }]
-        });
 
-        const mockEvent = {
-            data: mockSnap,
-            params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
-        };
-
-        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 50000 }) });
-        require('firebase-admin').firestore.mockImplementation(() => ({
-            collection: jest.fn().mockReturnThis(),
-            doc: jest.fn().mockReturnThis(),
-            get: mockSnapGet,
-            runTransaction: jest.fn(async (fn: any) => fn({
-                get: jest.fn().mockResolvedValue(mockSnap),
-                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
-                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
-            })),
-        }));
-        await createOrderHandler(mockEvent as any);
-
-        expect(mockSnap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
-            order_id: 'order_reused',
-            status: 'created'
-        }));
-    });
-
-    it('Behavior: should handle API error in order lookup and fallback to create', async () => {
-        const { getRazorpay } = require('../api');
-        const razorpayMock = getRazorpay();
-        razorpayMock.orders.all.mockRejectedValueOnce(new Error('Fetch failed'));
-        razorpayMock.orders.create.mockResolvedValueOnce({ id: 'order_fallback' });
-
-        const mockEvent = {
-            data: mockSnap,
-            params: { customers_collection: 'customers', uid: 'user1', id: 'session1' }
-        };
-
-        const mockSnapGet = jest.fn().mockResolvedValue({ exists: true, data: () => ({ amount: 50000 }) });
-        require('firebase-admin').firestore.mockImplementation(() => ({
-            collection: jest.fn().mockReturnThis(),
-            doc: jest.fn().mockReturnThis(),
-            get: mockSnapGet,
-            runTransaction: jest.fn(async (fn: any) => fn({
-                get: jest.fn().mockResolvedValue(mockSnap),
-                update: (...args: any[]) => mockSnap.ref.update(...args.slice(1)),
-                set: (...args: any[]) => mockSnap.ref.update(...args.slice(1))
-            })),
-        }));
-        await createOrderHandler(mockEvent as any);
-
-        expect(mockSnap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
-            order_id: 'order_fallback',
-            status: 'created'
-        }));
-    });
 });
