@@ -182,7 +182,9 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         await webhookEventRef.update({
             status: 'completed',
             completed_at: FieldValue.serverTimestamp(),
-        }).catch(() => { });
+        }).catch((err) => {
+            logs.error(`Failed to update webhook event status to completed (ID: ${eventId})`, err);
+        });
 
         res.status(200).send('Webhook Processed');
     } catch (err: any) {
@@ -194,13 +196,17 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         if (isRetryable) {
             // This allows the next retry to acquire the lock via transaction, while
             // preventing concurrent duplicates from both acquiring the lock simultaneously.
-            await webhookEventRef.update({ status: 'failed', updated_at: FieldValue.serverTimestamp() }).catch(() => { });
+            await webhookEventRef.update({ status: 'failed', updated_at: FieldValue.serverTimestamp() }).catch((err) => {
+                logs.error(`Failed to update webhook event status to failed (ID: ${eventId})`, err);
+            });
             res.status(500).send('Webhook processing failed internally - retryable');
         } else {
             // Return 200 so Razorpay doesn't retry forever on permanent logic errors.
             // Mark as completed to prevent re-processing of permanently failed events.
             logs.error(`PERMANENT WEBHOOK FAILURE — event ${event.event} (ID: ${eventId}) will NOT be retried. Manual investigation required.`);
-            await webhookEventRef.update({ status: 'completed', completed_at: FieldValue.serverTimestamp() }).catch(() => { });
+            await webhookEventRef.update({ status: 'completed', completed_at: FieldValue.serverTimestamp() }).catch((err) => {
+                logs.error(`Failed to update webhook event status to completed on permanent failure (ID: ${eventId})`, err);
+            });
             res.status(200).send('Webhook processing failed internally');
         }
     }

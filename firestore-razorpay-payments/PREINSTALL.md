@@ -34,3 +34,9 @@ Before installing, decide on the paths for your Firestore collections:
 - `PRODUCTS_COLLECTION`: Default is `products`. Plans can be manually synced or created via the extension's Admin HTTP API.
 
 You will also need to generate a secure, random string to act as your Webhook Secret.
+
+## Security & Data Integrity
+
+To prevent checkout session hijacking, payment privilege escalation, and note injection attacks, Firestore Security Rules are mandatory. The client must never have direct write or update access to sensitive payment fields like `order_id`, `subscription_id`, `amount`, `status`, and `currency`. Instead, these fields are written exclusively by the extension's admin backend.
+
+Refer to the POSTINSTALL instructions after installation for the exact Firestore Security Rules you must deploy to enforce this protection.

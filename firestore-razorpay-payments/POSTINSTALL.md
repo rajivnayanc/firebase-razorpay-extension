@@ -63,6 +63,12 @@ await firebase.firestore()
 
 > **⚠️ CRITICAL:** You MUST configure these Firestore Security Rules before going to production. Without them, any authenticated user can modify product prices and other users' data.
 
+> [!IMPORTANT]
+> **Note Injection Protection & Session Hijacking Prevention:**
+> The backend handlers in this extension verify the `order_id` or `subscription_id` to prevent malicious clients from inserting another user's session IDs (session hijacking/note injection). 
+> For this protection to be effective, **the client must NEVER be allowed to write or update fields like `order_id`, `subscription_id`, `amount`, `status`, or `currency`**. 
+> - The Rules below enforce this by strictly restricting `create` operations and completely disabling client `update` and `delete` operations (`allow update, delete: if false;`) on checkout sessions and subscriptions. The extension's admin functions bypass these rules securely.
+
 ```javascript
 rules_version = '2';
 service cloud.firestore {
