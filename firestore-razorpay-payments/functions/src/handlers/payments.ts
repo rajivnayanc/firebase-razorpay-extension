@@ -108,8 +108,8 @@ export const handlePaymentEvent = async (event: WebhookEvent, db: admin.firestor
 
             const existingData = snap.data();
             const expectedOrderId = isPayment ? (fetchedEntity as any).order_id : fetchedEntity!.id;
-            if (existingData?.order_id && expectedOrderId && existingData.order_id !== expectedOrderId) {
-                logs.error(new Error(`Order ID mismatch for session ${sessionId}. Expected: ${existingData.order_id}, Got: ${expectedOrderId}. Possible notes injection.`));
+            if (!existingData?.order_id || existingData.order_id !== expectedOrderId) {
+                logs.error(new Error(`Order ID missing or mismatch for session ${sessionId}. Expected: ${existingData?.order_id}, Got: ${expectedOrderId}. Possible notes injection.`));
                 return;
             }
 

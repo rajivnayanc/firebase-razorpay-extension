@@ -20,24 +20,19 @@ jest.mock('../utils/customerMapping', () => ({
 
 
 jest.mock('firebase-admin', () => {
-    const docMock = {
-        get: jest.fn().mockResolvedValue({ exists: false, empty: true, docs: [], data: () => null }),
-        collection: jest.fn().mockReturnThis(),
-        doc: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis()
-    };
-    const mockBatch = {
-        set: jest.fn(),
-        commit: jest.fn().mockResolvedValue({})
+    const getMock = jest.fn().mockResolvedValue({ exists: false, empty: true, docs: [], data: () => null });
+    const setMock = jest.fn();
+    const txMock = {
+        get: getMock,
+        set: setMock,
     };
     const firestoreMock = {
         collection: jest.fn().mockReturnThis(),
-        doc: jest.fn(() => docMock),
+        doc: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),
-        set: jest.fn().mockResolvedValue({}),
-        batch: jest.fn(() => mockBatch)
+        runTransaction: jest.fn(async (fn: any) => fn(txMock)),
+        _txMock: txMock,
     };
     const authMock = {
         setCustomUserClaims: jest.fn().mockResolvedValue({}),
@@ -58,12 +53,11 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         const admin = require('firebase-admin');
         mockAuth = admin.auth();
         jest.clearAllMocks();
-        // clear the shared batch mock
-        admin.firestore().batch().set.mockClear();
-        admin.firestore().batch().commit.mockClear();
         
-        const docMock = admin.firestore().doc();
-        docMock.get.mockResolvedValue({ exists: true, data: () => ({ firebaseRole: 'premium', subscription_id: 'sub_123' }) });
+        const txMock = admin.firestore()._txMock;
+        txMock.get.mockResolvedValue({ exists: true, data: () => ({ firebaseRole: 'premium', subscription_id: 'sub_123' }) });
+        txMock.set.mockClear();
+
         mockAuth.getUser.mockResolvedValue({ customClaims: {} });
     });
 
@@ -94,14 +88,14 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
 
         expect(razorpayApi.subscriptions.fetch).toHaveBeenCalledWith('sub_123');
         
-        const batch = admin.firestore().batch();
-        expect(batch.set).toHaveBeenCalledTimes(1); // Writing sub doc
+        const txMock = admin.firestore()._txMock;
+        expect(txMock.set).toHaveBeenCalledTimes(1); // Writing sub doc
     });
 
     it('Behavior: should process subscription.cancelled and update Firestore status', async () => {
         const admin = require('firebase-admin');
-        const docMock = admin.firestore().doc();
-        docMock.get.mockResolvedValueOnce({ exists: true, data: () => ({ firebaseRole: 'premium', subscription_id: 'sub_123' }) });
+        const txMock = admin.firestore()._txMock;
+        txMock.get.mockResolvedValueOnce({ exists: true, data: () => ({ firebaseRole: 'premium', subscription_id: 'sub_123' }) });
 
         mockAuth.getUser.mockResolvedValueOnce({ customClaims: { premium: true } });
 
@@ -121,8 +115,7 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
 
         await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
 
-        const batch = admin.firestore().batch();
-        expect(batch.set).toHaveBeenCalledTimes(1);
+        expect(txMock.set).toHaveBeenCalledTimes(1);
     });
 
 
@@ -157,10 +150,10 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         expect(razorpayApi.subscriptions.fetch).toHaveBeenCalledWith('sub_123');
         expect(razorpayApi.payments.fetch).toHaveBeenCalledWith('pay_001');
 
-        // sub doc (batch.set) and payment subcollection doc (batch.set)
-        const batch = admin.firestore().batch();
-        expect(batch.set).toHaveBeenCalledTimes(2);
-        expect(batch.set).toHaveBeenCalledWith(
+        // sub doc and payment subcollection doc
+        const txMock = admin.firestore()._txMock;
+        expect(txMock.set).toHaveBeenCalledTimes(2);
+        expect(txMock.set).toHaveBeenCalledWith(
             expect.anything(), 
             expect.objectContaining({ payment_id: 'pay_001' }),
             { merge: true }
@@ -171,8 +164,8 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
 
     it('Security Behavior: should reject webhook and log error if subscription document does not exist', async () => {
         const admin = require('firebase-admin');
-        const docMock = admin.firestore().doc();
-        docMock.get.mockResolvedValueOnce({ exists: false, data: () => null });
+        const txMock = admin.firestore()._txMock;
+        txMock.get.mockResolvedValueOnce({ exists: false, data: () => null });
 
         const razorpayApi = getRazorpay();
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
@@ -195,8 +188,7 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
 
         await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
 
-        // Verify that Firestore write was skipped (batch.commit should not be called)
-        const batch = admin.firestore().batch();
-        expect(batch.commit).not.toHaveBeenCalled();
+        // Verify that Firestore write was skipped
+        expect(txMock.set).not.toHaveBeenCalled();
     });
 });
