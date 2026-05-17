@@ -1,10 +1,14 @@
 import { getEventarc } from 'firebase-admin/eventarc';
+import { defineSecret } from 'firebase-functions/params';
+
+export const razorpayKeySecret = defineSecret('RAZORPAY_KEY_SECRET');
+export const razorpayWebhookSecret = defineSecret('RAZORPAY_WEBHOOK_SECRET');
 
 export default {
     // Extension parameters
     get razorpayKeyId() { return process.env.RAZORPAY_KEY_ID || ''; },
-    get razorpayKeySecret() { return process.env.RAZORPAY_KEY_SECRET || ''; },
-    get razorpayWebhookSecret() { return process.env.RAZORPAY_WEBHOOK_SECRET || ''; },
+    get razorpayKeySecret() { return razorpayKeySecret.value() || process.env.RAZORPAY_KEY_SECRET || ''; },
+    get razorpayWebhookSecret() { return razorpayWebhookSecret.value() || process.env.RAZORPAY_WEBHOOK_SECRET || ''; },
 
     // Firestore paths
     get customersCollectionPath() { return process.env.CUSTOMERS_COLLECTION || 'customers'; },

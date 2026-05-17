@@ -1,13 +1,38 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import Razorpay from 'razorpay';
+import * as admin from 'firebase-admin';
 import { verifyWebhookSignature } from './security';
-import config, { getEventChannel } from './config';
+import config, { getEventChannel, razorpayKeySecret, razorpayWebhookSecret } from './config';
 import { logs } from './logs';
 
 import { handleSubscriptionEvent } from './handlers/subscriptions';
 import { handlePaymentEvent } from './handlers/payments';
 
-// eventChannel is retrieved inside the handler to support lazy initialization and testability
+// Initialize Firebase Admin if not already initialized
+if (!admin.apps.length) {
+    admin.initializeApp();
+}
+
+export interface WebhookEvent {
+    event: string;
+    id: string;
+    payload: any;
+    created_at?: number;
+}
+
+const ALLOWED_EVENTS = new Set([
+    'subscription.charged',
+    'subscription.authenticated',
+    'subscription.active',
+    'subscription.halted',
+    'subscription.paused',
+    'subscription.cancelled',
+    'subscription.completed',
+    'subscription.pending',
+    'payment.captured',
+    'payment.failed',
+    'order.paid',
+]);
 
 // Lazy-init Razorpay: secrets aren't available at module load time
 let razorpay: InstanceType<typeof Razorpay>;
@@ -51,15 +76,42 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         return;
     }
 
-    const event = req.body;
+    const event = req.body as WebhookEvent;
     logs.startWebhook(event.event);
 
+    if (!ALLOWED_EVENTS.has(event.event)) {
+        res.status(200).send('Event not handled');
+        return;
+    }
+
+    const db = admin.firestore();
+
+    // Idempotency: Prevent Webhook Replay Attacks
+    const webhookEventRef = db.collection('webhook_events').doc(event.id);
     try {
-        // Route the event to the correct handler
+        await webhookEventRef.create({
+            event: event.event,
+            processed_at: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (e: any) {
+        if (e.code === 6) { // ALREADY_EXISTS in gRPC / Firestore
+            logs.info(`Webhook event ${event.id} already processed. Skipping.`);
+            res.status(200).send('Already Processed');
+            return;
+        }
+        logs.error(e);
+        res.status(500).send('Webhook processing failed internally');
+        return;
+    }
+
+    try {
+        const rzpClient = getRazorpay();
+        
+        // Route the event to the correct handler with Dependency Injection
         if (event.event.startsWith('subscription.')) {
-            await handleSubscriptionEvent(event);
+            await handleSubscriptionEvent(event, db, rzpClient);
         } else if (event.event.startsWith('payment.') || event.event.startsWith('order.')) {
-            await handlePaymentEvent(event);
+            await handlePaymentEvent(event, db, rzpClient);
         }
 
         // Publish to Eventarc channel if configured
@@ -79,14 +131,15 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         const isRetryable = err.code === 'DEADLINE_EXCEEDED' || err.code === 'UNAVAILABLE' || err.message?.includes('timeout') || err.message?.includes('network');
         
         if (isRetryable) {
+            // Remove the idempotency lock so it can be retried
+            await webhookEventRef.delete().catch(() => {});
             res.status(500).send('Webhook processing failed internally - retryable');
         } else {
             // Return 200 so Razorpay doesn't retry forever on permanent logic errors.
-            // Set up Cloud Monitoring alerts for 'PERMANENT WEBHOOK FAILURE' log entries.
             logs.error(`PERMANENT WEBHOOK FAILURE — event ${event.event} will NOT be retried. Manual investigation required.`);
             res.status(200).send('Webhook processing failed internally');
         }
     }
 };
 
-export const razorpayWebhookHandler = onRequest(webhookHandlerFunc);
+export const razorpayWebhookHandler = onRequest({ secrets: [razorpayKeySecret, razorpayWebhookSecret] }, webhookHandlerFunc);

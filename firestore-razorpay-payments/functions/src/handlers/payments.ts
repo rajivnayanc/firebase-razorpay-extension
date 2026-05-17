@@ -1,13 +1,32 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
+import Razorpay from 'razorpay';
 import { Orders } from 'razorpay/dist/types/orders';
 import { Payments } from 'razorpay/dist/types/payments';
 import config from '../config';
 import { logs } from '../logs';
-import { getRazorpay } from '../api';
+import { WebhookEvent } from '../api';
 
-export const handlePaymentEvent = async (event: any) => {
-    const db = admin.firestore();
+async function fetchWithBackoff<T>(fetchFn: () => Promise<T>, retries = 3, backoffMs = 500): Promise<T> {
+    let attempt = 0;
+    while (attempt < retries) {
+        try {
+            return await fetchFn();
+        } catch (err: any) {
+            attempt++;
+            if (err.statusCode === 429 && attempt < retries) {
+                logs.info(`Rate limited (429). Retrying in ${backoffMs}ms (Attempt ${attempt} of ${retries})`);
+                await new Promise(resolve => setTimeout(resolve, backoffMs));
+                backoffMs *= 2;
+            } else {
+                throw err;
+            }
+        }
+    }
+    throw new Error('Max retries reached');
+}
+
+export const handlePaymentEvent = async (event: WebhookEvent, db: admin.firestore.Firestore, razorpayClient: InstanceType<typeof Razorpay>) => {
     const webhookPaymentId = event.payload.payment?.entity?.id || event.payload.payment?.id;
     const webhookOrderId = event.payload.order?.entity?.id || event.payload.order?.id;
 
@@ -21,16 +40,16 @@ export const handlePaymentEvent = async (event: any) => {
 
     try {
         if (event.event.startsWith('payment.') && webhookPaymentId) {
-            fetchedEntity = await getRazorpay().payments.fetch(webhookPaymentId);
+            fetchedEntity = await fetchWithBackoff(() => razorpayClient.payments.fetch(webhookPaymentId));
             isPayment = true;
         } else if (event.event.startsWith('order.') && webhookOrderId) {
-            fetchedEntity = await getRazorpay().orders.fetch(webhookOrderId);
+            fetchedEntity = await fetchWithBackoff(() => razorpayClient.orders.fetch(webhookOrderId));
         } else if (webhookOrderId) {
             // Fallback: try order first if available
-            fetchedEntity = await getRazorpay().orders.fetch(webhookOrderId);
+            fetchedEntity = await fetchWithBackoff(() => razorpayClient.orders.fetch(webhookOrderId));
         } else if (webhookPaymentId) {
             // Fallback: target payment if only payment ID is present
-            fetchedEntity = await getRazorpay().payments.fetch(webhookPaymentId);
+            fetchedEntity = await fetchWithBackoff(() => razorpayClient.payments.fetch(webhookPaymentId));
             isPayment = true;
         }
     } catch (err: any) {
@@ -73,6 +92,7 @@ export const handlePaymentEvent = async (event: any) => {
         const dataToWrite: any = {
             status: newStatus,
             updated_at: FieldValue.serverTimestamp(),
+            processing_at: FieldValue.delete(), // Forcefully clear zombie processing lock
         };
 
         if (isPayment) {

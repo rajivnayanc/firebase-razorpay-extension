@@ -108,6 +108,28 @@ export const createOrderHandler = async (event: any) => {
         return;
     }
 
+    // Lazy Customer Creation
+    try {
+        const customerDoc = await admin.firestore().collection(config.customersCollectionPath).doc(event.params.uid).get();
+        let customerData = customerDoc.data() || {};
+        let razorpayCustomerId = customerData.razorpay_customer_id;
+
+        if (!razorpayCustomerId && config.syncCustomers) {
+            const userRec = await admin.auth().getUser(event.params.uid).catch(() => null);
+            const newCustomer = await getRazorpay().customers.create({
+                name: userRec?.displayName || customerData.name || 'Firebase User',
+                email: userRec?.email || customerData.email || undefined,
+                contact: userRec?.phoneNumber || customerData.phone || undefined,
+            });
+            razorpayCustomerId = newCustomer.id;
+            await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
+            logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${event.params.uid}`);
+        }
+    } catch (customerError) {
+        logs.error(new Error(`Failed to dynamically create Razorpay customer: ${customerError}`));
+        // We do not fail the order creation if customer creation fails, as orders don't strictly require a customer.
+    }
+
     try {
         // Receipt-based duplicate check: use Firestore doc ID as receipt
         // If a previous attempt created an order with this receipt, reuse it

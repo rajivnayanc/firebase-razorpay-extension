@@ -18,6 +18,8 @@ if (!config.razorpayKeyId || !config.razorpayKeySecret) {
     logs.error(new Error(`RAZORPAY_KEY_ID seems malformed (expected to start with 'rzp_'). Configuration is likely invalid.`));
 }
 
+import { cancelSubscription, updateSubscriptionPlan } from './callables/subscriptions';
+
 // Export all Extension functions
 export {
     // Session Triggers
@@ -34,5 +36,9 @@ export {
 
     // Admin Calls
     createPlan,
-    syncPlans
+    syncPlans,
+
+    // Client Callables
+    cancelSubscription,
+    updateSubscriptionPlan
 };
