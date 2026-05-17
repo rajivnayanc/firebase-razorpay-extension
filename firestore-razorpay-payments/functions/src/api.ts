@@ -128,7 +128,15 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
                 const doc = await tx.get(webhookEventRef);
                 if (!doc.exists) return true; // Deleted between create and here (extremely unlikely)
                 const data = doc.data();
-                if (data?.status === 'failed') {
+                
+                // Implement a timeout on the processing state lock (2 minutes)
+                const updatedAt = data?.updated_at;
+                const isStuck = data?.status === 'processing' &&
+                                updatedAt &&
+                                (typeof updatedAt.toMillis === 'function') &&
+                                (Date.now() - updatedAt.toMillis() > 2 * 60 * 1000); // 2 mins
+
+                if (data?.status === 'failed' || isStuck) {
                     // Acquire the retry lock
                     tx.update(webhookEventRef, {
                         status: 'processing',

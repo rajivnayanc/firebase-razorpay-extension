@@ -400,6 +400,107 @@ describe('Webhook API', () => {
         expect(res.send).toHaveBeenCalledWith('Already Processed');
     });
 
+    it('should retry a webhook when previous attempt is stuck in processing (older than 2 minutes)', async () => {
+        const admin = require('firebase-admin');
+        const firestoreMock = admin.firestore();
+
+        // Simulate ALREADY_EXISTS
+        const alreadyExistsError = new Error('Already exists');
+        (alreadyExistsError as any).code = 6;
+        firestoreMock.create.mockRejectedValueOnce(alreadyExistsError);
+
+        // Transaction finds 'processing' status doc but stuck (updated 3 minutes ago)
+        firestoreMock.runTransaction
+            .mockImplementationOnce(async (fn: any) => {
+                const mockTx = {
+                    get: jest.fn().mockResolvedValue({
+                        exists: true,
+                        data: () => ({
+                            status: 'processing',
+                            event: 'payment.captured',
+                            updated_at: { toMillis: () => Date.now() - 3 * 60 * 1000 } // 3 mins ago
+                        }),
+                    }),
+                    update: jest.fn(),
+                    set: jest.fn(),
+                };
+                return fn(mockTx);
+            })
+            .mockImplementationOnce(async (fn: any) => {
+                // Handler's transaction (payments.ts) — simulate existing session
+                const mockTx = {
+                    get: jest.fn().mockResolvedValue({
+                        exists: true,
+                        data: () => ({ order_id: 'order_123' }),
+                    }),
+                    update: jest.fn(),
+                    set: jest.fn(),
+                };
+                return fn(mockTx);
+            });
+
+        const req: any = {
+            method: 'POST',
+            body: payload,
+            rawBody: Buffer.from(payloadStr),
+            headers: { 'x-razorpay-signature': signature }
+        };
+        const res: any = {
+            status: jest.fn().mockReturnThis(),
+            send: jest.fn(),
+        };
+
+        await webhookHandlerFunc(req, res);
+
+        // Should successfully retry, update lock, and return 200 Webhook Processed
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.send).toHaveBeenCalledWith('Webhook Processed');
+    });
+
+    it('should skip a webhook when previous attempt is processing recently (less than 2 minutes)', async () => {
+        const admin = require('firebase-admin');
+        const firestoreMock = admin.firestore();
+
+        // Simulate ALREADY_EXISTS
+        const alreadyExistsError = new Error('Already exists');
+        (alreadyExistsError as any).code = 6;
+        firestoreMock.create.mockRejectedValueOnce(alreadyExistsError);
+
+        // Transaction finds 'processing' status doc, updated recently (30 seconds ago)
+        firestoreMock.runTransaction.mockImplementationOnce(async (fn: any) => {
+            const mockTx = {
+                get: jest.fn().mockResolvedValue({
+                    exists: true,
+                    data: () => ({
+                        status: 'processing',
+                        event: 'payment.captured',
+                        updated_at: { toMillis: () => Date.now() - 30 * 1000 } // 30 seconds ago
+                    }),
+                }),
+                update: jest.fn(),
+                set: jest.fn(),
+            };
+            return fn(mockTx);
+        });
+
+        const req: any = {
+            method: 'POST',
+            body: payload,
+            rawBody: Buffer.from(payloadStr),
+            headers: { 'x-razorpay-signature': signature }
+        };
+        const res: any = {
+            status: jest.fn().mockReturnThis(),
+            send: jest.fn(),
+        };
+
+        await webhookHandlerFunc(req, res);
+
+        // Should skip processing and return 200 Already Processed
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.send).toHaveBeenCalledWith('Already Processed');
+    });
+
     it('should generate deterministic fallback IDs for identical payloads', async () => {
         const admin = require('firebase-admin');
         const firestoreMock = admin.firestore();
