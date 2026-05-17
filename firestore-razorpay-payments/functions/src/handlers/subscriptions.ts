@@ -4,6 +4,7 @@ import Razorpay from 'razorpay';
 import config from '../config';
 import { logs } from '../logs';
 import { WebhookEvent } from '../api';
+import { fetchWithBackoff } from '../utils/retry';
 
 /**
  * Incrementally sync custom claims based on the Razorpay API response.
@@ -40,25 +41,6 @@ export async function syncCustomClaims(
         // User might have been deleted mid-flight, simply ignore
         logs.error(new Error(`Failed to sync claims for ${uid}: ${error}`));
     }
-}
-
-async function fetchWithBackoff<T>(fetchFn: () => Promise<T>, retries = 3, backoffMs = 500): Promise<T> {
-    let attempt = 0;
-    while (attempt < retries) {
-        try {
-            return await fetchFn();
-        } catch (err: any) {
-            attempt++;
-            if (err.statusCode === 429 && attempt < retries) {
-                logs.info(`Rate limited (429). Retrying in ${backoffMs}ms (Attempt ${attempt} of ${retries})`);
-                await new Promise(resolve => setTimeout(resolve, backoffMs));
-                backoffMs *= 2; // Exponential backoff
-            } else {
-                throw err;
-            }
-        }
-    }
-    throw new Error('Max retries reached');
 }
 
 export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.firestore.Firestore, razorpayClient: InstanceType<typeof Razorpay>) => {
@@ -141,7 +123,13 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
             charge_at: subscriptionEntity.charge_at,
             short_url: subscriptionEntity.short_url,
             updated_at: FieldValue.serverTimestamp(),
-            processing_at: FieldValue.delete(), // Forcefully clear zombie processing lock
+            // Only clear processing_at if this webhook belongs to the same subscription.
+            // Since subscription docs use subscription_id as the doc ID (1:1), this is a safety
+            // check against edge cases where the doc was somehow reused or the subscription_id
+            // in the existing doc doesn't match (e.g., data corruption).
+            ...((! existingDoc.exists || existingDoc.data()?.subscription_id === subscriptionEntity.id)
+                ? { processing_at: FieldValue.delete() }
+                : {}),
         };
 
         if (role !== undefined && !existingDoc.exists) {

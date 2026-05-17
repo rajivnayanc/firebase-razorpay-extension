@@ -1,4 +1,5 @@
 import { onRequest } from 'firebase-functions/v2/https';
+import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -105,25 +106,47 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         return;
     }
 
-    const eventId = (req.headers['x-razorpay-event-id'] as string) || event.id || `evt_${event.event}_${Date.now()}`;
+    const eventId = (req.headers['x-razorpay-event-id'] as string) || 
+                    event.id || 
+                    `evt_${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
     const db = admin.firestore();
 
-    // Idempotency: Prevent Webhook Replay Attacks
     const webhookEventRef = db.collection('webhook_events').doc(eventId);
     try {
         await webhookEventRef.create({
             event: event.event,
-            processed_at: FieldValue.serverTimestamp(),
+            status: 'processing',
+            created_at: FieldValue.serverTimestamp(),
+            updated_at: FieldValue.serverTimestamp(),
         });
     } catch (e: any) {
         if (e.code === 6) { // ALREADY_EXISTS in gRPC / Firestore
-            logs.info(`Webhook event ${eventId} already processed. Skipping.`);
-            res.status(200).send('Already Processed');
+            // Document exists — check if it's a failed retry candidate
+            const canRetry = await db.runTransaction(async (tx) => {
+                const doc = await tx.get(webhookEventRef);
+                if (!doc.exists) return true; // Deleted between create and here (extremely unlikely)
+                const data = doc.data();
+                if (data?.status === 'failed') {
+                    // Acquire the retry lock
+                    tx.update(webhookEventRef, {
+                        status: 'processing',
+                        updated_at: FieldValue.serverTimestamp(),
+                    });
+                    return true;
+                }
+                return false; // 'processing' or 'completed' — do not re-enter
+            });
+
+            if (!canRetry) {
+                logs.info(`Webhook event ${eventId} already processed or in-flight. Skipping.`);
+                res.status(200).send('Already Processed');
+                return;
+            }
+        } else {
+            logs.error(e);
+            res.status(500).send('Webhook processing failed internally');
             return;
         }
-        logs.error(e);
-        res.status(500).send('Webhook processing failed internally');
-        return;
     }
 
     try {
@@ -145,6 +168,12 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
             });
         }
 
+        // Mark idempotency document as completed
+        await webhookEventRef.update({
+            status: 'completed',
+            completed_at: FieldValue.serverTimestamp(),
+        }).catch(() => { });
+
         res.status(200).send('Webhook Processed');
     } catch (err: any) {
         logs.error(`Webhook processing failed for event: ${event.event} (ID: ${eventId})`, err);
@@ -153,12 +182,15 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         const isRetryable = err.code === 'DEADLINE_EXCEEDED' || err.code === 'UNAVAILABLE' || err.message?.includes('timeout') || err.message?.includes('network');
 
         if (isRetryable) {
-            // Remove the idempotency lock so it can be retried
-            await webhookEventRef.delete().catch(() => { });
+            // This allows the next retry to acquire the lock via transaction, while
+            // preventing concurrent duplicates from both acquiring the lock simultaneously.
+            await webhookEventRef.update({ status: 'failed', updated_at: FieldValue.serverTimestamp() }).catch(() => { });
             res.status(500).send('Webhook processing failed internally - retryable');
         } else {
             // Return 200 so Razorpay doesn't retry forever on permanent logic errors.
+            // Mark as completed to prevent re-processing of permanently failed events.
             logs.error(`PERMANENT WEBHOOK FAILURE — event ${event.event} (ID: ${eventId}) will NOT be retried. Manual investigation required.`);
+            await webhookEventRef.update({ status: 'completed', completed_at: FieldValue.serverTimestamp() }).catch(() => { });
             res.status(200).send('Webhook processing failed internally');
         }
     }
