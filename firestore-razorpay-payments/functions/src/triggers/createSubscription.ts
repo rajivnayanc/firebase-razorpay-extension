@@ -35,14 +35,6 @@ export const createSubscriptionHandler = async (event: any) => {
 
     // Fetch the canonical customer document using the trusted UID from the document path
     const customerDoc = await db.collection(config.customersCollectionPath).doc(event.params.uid).get();
-    if (!customerDoc.exists) {
-        logs.error(new Error(`Customer record for UID ${event.params.uid} does not exist.`));
-        await snap.ref.update({
-            status: 'failed',
-            error: 'Account setup incomplete. Please contact support.',
-        });
-        return;
-    }
     const customerData = customerDoc.data() || {};
     let razorpayCustomerId = customerData.razorpay_customer_id;
 
@@ -55,12 +47,14 @@ export const createSubscriptionHandler = async (event: any) => {
                     name: userRec?.displayName || customerData.name || 'Firebase User',
                     email: userRec?.email || customerData.email || undefined,
                     contact: userRec?.phoneNumber || customerData.phone || undefined,
-                });
+                    fail_existing: '0',
+                } as any);
                 razorpayCustomerId = newCustomer.id;
                 await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
                 logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${event.params.uid}`);
-            } catch (customerError) {
-                logs.error(new Error(`Failed to dynamically create Razorpay customer for UID ${event.params.uid}: ${customerError}`));
+            } catch (customerError: any) {
+                const errMsg = customerError instanceof Error ? customerError.message : (typeof customerError === 'object' ? JSON.stringify(customerError) : String(customerError));
+                logs.error(new Error(`Failed to dynamically create Razorpay customer for UID ${event.params.uid}: ${errMsg}`));
                 await snap.ref.update({
                     status: 'failed',
                     error: 'Account setup incomplete. Please contact support.',

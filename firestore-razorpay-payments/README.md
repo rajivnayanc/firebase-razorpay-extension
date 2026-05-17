@@ -47,6 +47,45 @@ During installation, you'll configure:
 | **Allowed Origins** | CORS origins for client-facing endpoints |
 | **Location** | Cloud Functions deployment region |
 
+## Catalog Configuration
+
+To enable checkouts, you must configure products/plans inside your Firestore `products` collection:
+
+> [!TIP]
+> **Understanding `productId`:**
+> The `productId` you pass when initiating a purchase (in checkout sessions or subscriptions) is simply the **Firestore Document ID** of the product inside your `/products` collection.
+> * If you create a product at `/products/one_time_premium`, its `productId` is `one_time_premium`.
+> * If a plan is synced or created at `/products/monthly_subscription`, its `productId` is `monthly_subscription`.
+
+### 1. One-Time Product
+**Firestore Document Path:** `/products/[product_id]`
+```json
+{
+  "active": true,
+  "name": "Lifetime Premium Upgrade",
+  "description": "Permanent access to VIP features.",
+  "amount": 499900,  // ₹4,999.00 (in paise)
+  "currency": "INR",
+  "type": "one-time",
+  "firebaseRole": "Premium"
+}
+```
+
+### 2. Subscription Product
+**Firestore Document Path:** `/products/[product_id]`
+```json
+{
+  "active": true,
+  "name": "Premium Subscription",
+  "description": "Monthly recurring access.",
+  "type": "subscription",
+  "firebaseRole": "Premium",
+  "allowedPlans": {
+    "monthly": "plan_XYZ123456789" // Razorpay Plan ID
+  }
+}
+```
+
 ## Usage
 
 ### Create a one-time payment
@@ -97,12 +136,21 @@ To configure this:
 
 ## Webhook Setup
 
-After installing, configure your Razorpay webhook:
+After installing, configure your Razorpay webhook to synchronize payment statuses in real-time:
 
-1. Go to [Razorpay Dashboard → Settings → Webhooks](https://dashboard.razorpay.com/app/webhooks)
-2. Add webhook URL: `https://<LOCATION>-<PROJECT_ID>.cloudfunctions.net/ext-razorpay-payments-razorpayWebhookHandler/webhook`
-3. Select events: `payment.*`, `order.*`, `subscription.*`, `item.*`
-4. Set the webhook secret to match your extension configuration
+1. Go to your [Razorpay Dashboard → Settings → Webhooks](https://dashboard.razorpay.com/app/webhooks).
+2. Click **Add New Webhook**.
+3. Set the **Webhook URL** to:
+   - **Production:** `https://<LOCATION>-<PROJECT_ID>.cloudfunctions.net/ext-razorpay-payments-razorpayWebhookHandler`
+   - **Local Emulator:** `http://localhost:5001/demo-test/us-central1/razorpayWebhookHandler`
+4. Set the **Secret** to the exact Webhook Secret you configured during installation.
+5. Select the following **Active Events**:
+   - **Payments:** `payment.authorized`, `payment.captured`, `payment.failed`
+   - **Disputes:** `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`
+   - **Downtimes:** `payment.downtime.started`, `payment.downtime.updated`, `payment.downtime.resolved`
+   - **Orders:** `order.paid`, `order.notification.delivered`, `order.notification.failed`
+   - **Subscriptions:** `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.completed`, `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.resumed`, `subscription.updated`, `subscription.cancelled`
+6. Click **Save**.
 
 ## Billing
 

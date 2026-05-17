@@ -22,17 +22,31 @@ export interface WebhookEvent {
 }
 
 const ALLOWED_EVENTS = new Set([
-    'subscription.charged',
-    'subscription.authenticated',
-    'subscription.active',
-    'subscription.halted',
-    'subscription.paused',
-    'subscription.cancelled',
-    'subscription.completed',
-    'subscription.pending',
-    'payment.captured',
-    'payment.failed',
-    'order.paid',
+    "payment.authorized",
+    "payment.failed",
+    "payment.captured",
+    "payment.dispute.created",
+    "order.paid",
+    "order.notification.delivered",
+    "order.notification.failed",
+    "subscription.authenticated",
+    "subscription.paused",
+    "subscription.resumed",
+    "subscription.activated",
+    "subscription.pending",
+    "subscription.halted",
+    "subscription.charged",
+    "subscription.cancelled",
+    "subscription.completed",
+    "subscription.updated",
+    "payment.dispute.won",
+    "payment.dispute.lost",
+    "payment.dispute.closed",
+    "payment.dispute.under_review",
+    "payment.dispute.action_required",
+    "payment.downtime.started",
+    "payment.downtime.updated",
+    "payment.downtime.resolved"
 ]);
 
 // Lazy-init Razorpay: secrets aren't available at module load time

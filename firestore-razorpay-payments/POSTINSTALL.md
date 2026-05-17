@@ -9,13 +9,15 @@ To ensure your Firestore database is synced correctly with Razorpay, you must co
 1. Go to your [Razorpay Dashboard → Settings → Webhooks](https://dashboard.razorpay.com/app/webhooks).
 2. Click **Add New Webhook**.
 3. Set the **Webhook URL** to:
-   `${function:razorpayWebhookHandler.url}/webhook`
-4. Set the **Secret** to the exact Webhook Secret you entered during installation.
+   - **Production:** `${function:razorpayWebhookHandler.url}`
+   - **Local Emulator Testing:** `http://localhost:5001/${param:PROJECT_ID}/${param:LOCATION}/razorpayWebhookHandler` (or your ngrok forwarding URL)
+4. Set the **Secret** to the exact Webhook Secret you configured during installation.
 5. Select the following **Active Events**:
-   - `order.paid`
-   - `payment.captured`
-   - `payment.failed`
-   - `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.completed`, `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.resumed`, `subscription.updated`
+   - **Payments:** `payment.authorized`, `payment.captured`, `payment.failed`
+   - **Disputes:** `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`
+   - **Downtimes:** `payment.downtime.started`, `payment.downtime.updated`, `payment.downtime.resolved`
+   - **Orders:** `order.paid`, `order.notification.delivered`, `order.notification.failed`
+   - **Subscriptions:** `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.completed`, `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.resumed`, `subscription.updated`, `subscription.cancelled`
 6. Click **Save**.
 
 ## How it works
@@ -136,12 +138,43 @@ service cloud.firestore {
 }
 ```
 
-### Admin Plan Management
+### Catalog Management & Product Creation
 
-Since Razorpay doesn't have plan webhooks, you must use the following admin endpoints to manage your catalog. Only users with the `admin: true` custom claim can access these.
+To allow users to purchase premium subscriptions or one-time upgrades, you must build a product catalog in your `${param:PRODUCTS_COLLECTION}` collection. The extension supports two different product types:
 
-#### Setting Admin Claims
-The recommended way to bootstrap the first admin user is by using a short Node.js script using the Firebase Admin SDK. Run this script locally:
+> [!TIP]
+> **Understanding `productId`:**
+> The `productId` you pass when initiating a purchase (in checkout sessions or subscriptions) is simply the **Firestore Document ID** of the product inside your `${param:PRODUCTS_COLLECTION}` collection.
+> * If you write a product at `/products/one_time_premium`, its `productId` is `one_time_premium`.
+> * If a plan is synced or created at `/products/monthly_subscription`, its `productId` is `monthly_subscription`.
+
+---
+
+#### 1. One-Time Products (One-Time Purchases)
+One-Time Products represent digital items, physical goods, or permanent premium upgrades (e.g. lifetime access). 
+* **How to create:** You can create one-time products directly in the `${param:PRODUCTS_COLLECTION}` collection. Because client-side writes should be restricted by Firestore rules, you should use the Firebase Admin SDK (e.g. via a secure Cloud Function or Admin endpoint) to write these documents:
+
+**Firestore Document Path:** `/${param:PRODUCTS_COLLECTION}/[product_id]`
+```json
+{
+  "active": true,
+  "name": "Lifetime Gold Membership",
+  "description": "Unlock premium lifetime privileges with zero recurring subscription fees.",
+  "amount": 499900,  // ₹4,999.00 (in paise, representing the base unit of the currency)
+  "currency": "INR",
+  "type": "one-time",
+  "firebaseRole": "GoldPremium" // Optional: custom Auth role to grant on successful payment
+}
+```
+
+---
+
+#### 2. Subscription Products (Recurring Plans)
+Subscription Products represent recurring billing plans (e.g. Monthly Premium, Annual VIP).
+* **How to create:** Subscriptions require corresponding plans to exist inside your Razorpay Dashboard. The extension exposes two admin-secured Firebase Callable Functions to easily synchronize and manage plans:
+
+##### Setting Admin Claims
+To call these administrative functions, your developer user account must have the `admin: true` Custom Claim. Bootstrap your first admin user with a local script:
 
 ```javascript
 const admin = require('firebase-admin');
@@ -155,26 +188,45 @@ admin.auth().setCustomUserClaims(uid, { admin: true })
   .then(() => console.log('Admin claim set successfully!'));
 ```
 
----
-
-#### `POST /admin/plans` & `POST /admin/plans/sync`
-These are **Firebase Callable Functions** (not standard REST endpoints). They securely execute the plan creation and sync. You must call them from your client application using the standard Firebase SDK:
+##### Creating Subscription Plans in Razorpay & Firestore
+Call the `createPlan` callable function from your administrative dashboard UI. This creates the plan inside Razorpay and automatically triggers a sync to your products collection:
 
 ```javascript
 import { getFunctions, httpsCallable } from "firebase/functions";
 const functions = getFunctions();
 
-// Sync all plans from Razorpay to your products collection
-const syncPlans = httpsCallable(functions, "ext-razorpay-payments-syncPlans");
-syncPlans().then(result => console.log("Synced Plans:", result.data.count));
-
-// Create a new plan from the admin dashboard UI
 const createPlan = httpsCallable(functions, "ext-razorpay-payments-createPlan");
 createPlan({
-  period: "monthly",
-  interval: 1,
-  item: { name: "Premium", amount: 50000, currency: "INR" }
-});
+  period: "monthly", // monthly, yearly, weekly, daily
+  interval: 1,      // every 1 month
+  item: { 
+    name: "Premium Subscription", 
+    amount: 50000,    // ₹500.00 (in paise)
+    currency: "INR" 
+  }
+}).then(result => console.log("Created Subscription Plan ID:", result.data.id));
+```
+
+##### Syncing Existing Plans from Razorpay
+If you already have plans configured in your Razorpay Dashboard, you can fetch and sync them all directly to Firestore in one call:
+
+```javascript
+const syncPlans = httpsCallable(functions, "ext-razorpay-payments-syncPlans");
+syncPlans().then(result => console.log("Successfully synced", result.data.count, "plans to Firestore"));
+```
+
+**Resulting Firestore Document Path:** `/${param:PRODUCTS_COLLECTION}/[product_name_or_id]`
+```json
+{
+  "active": true,
+  "name": "Premium Subscription",
+  "description": "Monthly subscription plan",
+  "type": "subscription",
+  "firebaseRole": "Premium", // Custom role mapped to this subscription
+  "allowedPlans": {
+    "monthly": "plan_XYZ1234567890" // Maps billing intervals to Razorpay Plan IDs
+  }
+}
 ```
 
 ### Role-based Access Control (Custom Claims)
@@ -203,9 +255,21 @@ If you enabled events during installation, this extension publishes the followin
 
 | Event Type | Description |
 |---|---|
-| `com.razorpay.v1.order.paid` | Order is paid |
+| `com.razorpay.v1.payment.authorized` | Payment authorized |
 | `com.razorpay.v1.payment.captured` | Payment captured |
 | `com.razorpay.v1.payment.failed` | Payment failed |
+| `com.razorpay.v1.payment.dispute.created` | Dispute created |
+| `com.razorpay.v1.payment.dispute.won` | Dispute won |
+| `com.razorpay.v1.payment.dispute.lost` | Dispute lost |
+| `com.razorpay.v1.payment.dispute.closed` | Dispute closed |
+| `com.razorpay.v1.payment.dispute.under_review` | Dispute under review |
+| `com.razorpay.v1.payment.dispute.action_required` | Dispute action required |
+| `com.razorpay.v1.payment.downtime.started` | Payment gateway downtime started |
+| `com.razorpay.v1.payment.downtime.updated` | Payment gateway downtime updated |
+| `com.razorpay.v1.payment.downtime.resolved` | Payment gateway downtime resolved |
+| `com.razorpay.v1.order.paid` | Order is paid |
+| `com.razorpay.v1.order.notification.delivered` | Order notification delivered to customer |
+| `com.razorpay.v1.order.notification.failed` | Order notification failed to deliver |
 | `com.razorpay.v1.subscription.authenticated` | Subscription authenticated |
 | `com.razorpay.v1.subscription.activated` | Subscription activated |
 | `com.razorpay.v1.subscription.charged` | Subscription charged |
