@@ -89,17 +89,15 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
     }
     
     try {
-        // DO NOT trust the client payload for the firebaseRole. 
-        // Read it from the existing Firestore document (which was securely set by createSubscription.ts)
+        // Read the role strictly from the existing Firestore document (which was securely set by createSubscription.ts)
         const existingDoc = await docRef.get();
-        let role = subscriptionEntity.notes?.firebaseRole ? String(subscriptionEntity.notes?.firebaseRole) : undefined;
-        
-        if (existingDoc.exists) {
-            const docData = existingDoc.data();
-            if (docData?.firebaseRole) {
-                role = docData.firebaseRole; // Override with the secure role from DB
-            }
+        if (!existingDoc.exists) {
+            logs.error(new Error(`Subscription document does not exist in Firestore for ID: ${subscriptionId}. Rejecting webhook event.`));
+            return;
         }
+
+        const docData = existingDoc.data();
+        const role = docData?.firebaseRole ? String(docData.firebaseRole) : undefined;
 
         let shouldSetClaims = false;
         let shouldRemoveClaims = false;
@@ -132,10 +130,7 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
                 : {}),
         };
 
-        if (role !== undefined && !existingDoc.exists) {
-            // Only write role if it's a new document creation from fallback, though ideally the doc already exists
-            dataToWrite.firebaseRole = role;
-        }
+
 
         const batch = db.batch();
         batch.set(docRef, dataToWrite, { merge: true });

@@ -175,7 +175,7 @@ export const createSubscriptionHandler = async (event: any) => {
             const subscription = await getRazorpay().subscriptions.create(options);
             logs.subscriptionCreated(subscription.id, snap.ref.path);
 
-            await snap.ref.update({
+            const subscriptionData = {
                 subscription_id: subscription.id,
                 plan_id: subscription.plan_id,
                 status: subscription.status,
@@ -188,7 +188,16 @@ export const createSubscriptionHandler = async (event: any) => {
                 charge_at: subscription.charge_at,
                 created_at: FieldValue.serverTimestamp(),
                 firebaseRole: secureRole,
-            });
+            };
+
+            await snap.ref.update(subscriptionData);
+
+            // Write securely to the canonical subscription ID path (for webhook verification)
+            const canonicalDocRef = db.collection(config.customersCollectionPath)
+                .doc(event.params.uid)
+                .collection('subscriptions')
+                .doc(subscription.id);
+            await canonicalDocRef.set(subscriptionData, { merge: true });
 
         } catch (error: any) {
             logs.error(error);
