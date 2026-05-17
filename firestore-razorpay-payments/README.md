@@ -30,7 +30,7 @@ Install from the [Firebase Extensions Hub](https://extensions.dev) by searching 
 ### Firebase CLI
 
 ```bash
-firebase ext:install AiTaskFlows/razorpay-payments --project=YOUR_PROJECT_ID
+firebase ext:install rajivnayanc/firebase-razorpay-extension/firestore-razorpay-payments --project=YOUR_PROJECT_ID
 ```
 
 ## Configuration

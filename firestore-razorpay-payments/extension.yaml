@@ -11,12 +11,12 @@ description: >-
 icon: icon.png
 tags: [payments]
 
-sourceUrl: https://github.com/AiTaskFlows/razorpay-firebase-extension
-releaseNotesUrl: https://github.com/AiTaskFlows/razorpay-firebase-extension/blob/main/CHANGELOG.md
+sourceUrl: https://github.com/rajivnayanc/firebase-razorpay-extension
+releaseNotesUrl: https://github.com/rajivnayanc/firebase-razorpay-extension/blob/main/CHANGELOG.md
 
 author:
   authorName: Rajiv
-  url: https://github.com/AiTaskFlows
+  url: https://github.com/rajivnayanc
 
 license: Apache-2.0
 
