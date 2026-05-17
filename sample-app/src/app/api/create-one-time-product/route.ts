@@ -9,7 +9,6 @@ if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
-  // Use environment variables for the service account or fallback to emulator
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       try {
           const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -20,7 +19,6 @@ if (!admin.apps.length) {
           console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT env var', error);
       }
   } else {
-      // Setup for emulator - the environment variable FIREBASE_AUTH_EMULATOR_HOST MUST be set automatically by the frontend startup or manually
       admin.initializeApp({ projectId: "demo-test" });
   }
 }
@@ -42,22 +40,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid Token' }, { status: 401 });
     }
 
-    // Set admin claims
-    await admin.auth().setCustomUserClaims(uid, {
-      admin: true,
-      role: 'admin'
-    });
+    const db = admin.firestore();
+    const productRef = db.collection('products').doc('one_time_premium');
+    
+    await productRef.set({
+      active: true,
+      name: 'Premium Lifetime Access',
+      description: 'Get permanent lifetime access to all premium features with a single, one-time payment. No recurring fees.',
+      amount: 499900, // ₹4,999.00
+      currency: 'INR',
+      type: 'one-time',
+      firebaseRole: 'Premium'
+    }, { merge: true });
 
-    console.log(`Successfully set admin claims for user: ${uid}`);
+    console.log(`Successfully created one-time premium product in Firestore`);
     return NextResponse.json({ 
       status: 'SUCCESS', 
-      message: 'Admin claims set. Please sign out and sign back in.' 
+      message: 'One-Time Premium Product created in Firestore!' 
     });
 
   } catch (error: any) {
-    console.error('Error setting admin claim:', error);
+    console.error('Error creating one-time product:', error);
     return NextResponse.json(
-      { error: 'Failed to set admin claim', details: error.message },
+      { error: 'Failed to create product', details: error.message },
       { status: 500 }
     );
   }

@@ -19,6 +19,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<any[]>([]);
   const [activeSubscriptions, setActiveSubscriptions] = useState<any[]>([]);
+  const [completedPayments, setCompletedPayments] = useState<any[]>([]);
   const [userRole, setUserRole] = useState<string | null>(null);
 
   // UI States
@@ -32,9 +33,17 @@ export default function Home() {
 
   // Initialize
   useEffect(() => {
+    let unsubSubs: (() => void) | null = null;
+    let unsubPayments: (() => void) | null = null;
+
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setLoading(false);
+      
+      // Cleanup previous listeners if user changed
+      if (unsubSubs) unsubSubs();
+      if (unsubPayments) unsubPayments();
+
       if (u) {
         // Check for admin/roles
         const tokenResult = await getIdTokenResult(u);
@@ -46,9 +55,21 @@ export default function Home() {
           collection(db, 'customers', u.uid, 'subscriptions'),
           where('status', 'in', ['active', 'trialing'])
         );
-        onSnapshot(subsQuery, (snap) => {
+        unsubSubs = onSnapshot(subsQuery, (snap) => {
           setActiveSubscriptions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         });
+
+        // Listen to completed one-time payments
+        const paymentsQuery = query(
+          collection(db, 'customers', u.uid, 'checkout_sessions'),
+          where('status', '==', 'paid')
+        );
+        unsubPayments = onSnapshot(paymentsQuery, (snap) => {
+          setCompletedPayments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
+      } else {
+        setActiveSubscriptions([]);
+        setCompletedPayments([]);
       }
     });
 
@@ -60,6 +81,8 @@ export default function Home() {
 
     return () => {
       unsub();
+      if (unsubSubs) unsubSubs();
+      if (unsubPayments) unsubPayments();
       unsubProducts();
     };
   }, []);
@@ -148,6 +171,32 @@ export default function Home() {
         }
       } : {});
       setStatus({ message: 'Action completed successfully!', type: 'success' });
+    } catch (err: any) {
+      setStatus({ message: `Admin Error: ${err.message}`, type: 'error' });
+    }
+  };
+
+  const createOneTimeProduct = async () => {
+    setStatus({ message: 'Creating One-Time Premium Product in Firestore...', type: 'info' });
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        throw new Error('You must be logged in to execute this action.');
+      }
+      
+      const response = await fetch('/api/create-one-time-product', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create one-time product');
+      }
+      
+      setStatus({ message: 'One-Time Premium Product created in Firestore!', type: 'success' });
     } catch (err: any) {
       setStatus({ message: `Admin Error: ${err.message}`, type: 'error' });
     }
@@ -256,6 +305,7 @@ export default function Home() {
                 <div className="flex flex-wrap gap-4">
                   <button onClick={() => runAdminAction('sync')} className="px-6 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold transition-all">Sync from Razorpay</button>
                   <button onClick={() => runAdminAction('create')} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-bold transition-all">Create Demo Plan</button>
+                  <button onClick={createOneTimeProduct} className="px-6 py-2 bg-pink-600 hover:bg-pink-500 rounded-xl text-sm font-bold transition-all">Create One-Time Product</button>
                 </div>
               </div>
             )}
@@ -276,6 +326,23 @@ export default function Home() {
                     <p className="text-[10px] text-slate-500 uppercase font-bold">{sub.status}</p>
                   </div>
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_#22c55e]"></span>
+                </div>
+              ))}
+            </div>
+
+            <div className="glass-card p-6 rounded-2xl space-y-4">
+              <h2 className="text-sm font-black text-slate-500 uppercase tracking-widest">One-Time Purchases</h2>
+              {completedPayments.length === 0 ? (
+                <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800 text-center">
+                  <p className="text-xs text-slate-500">No one-time purchases</p>
+                </div>
+              ) : completedPayments.map(payment => (
+                <div key={payment.id} className="p-4 bg-pink-500/10 border border-pink-500/20 rounded-xl flex justify-between items-center">
+                  <div>
+                    <p className="text-xs font-bold text-pink-400">{payment.productId}</p>
+                    <p className="text-[10px] text-slate-500 uppercase font-bold">Paid (₹{payment.amount ? payment.amount / 100 : '---'})</p>
+                  </div>
+                  <span className="w-2 h-2 bg-pink-500 rounded-full animate-pulse shadow-[0_0_8px_#ec4899]"></span>
                 </div>
               ))}
             </div>

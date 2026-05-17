@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "emulators": "firebase emulators:start --import=./test-data --export-on-exit"
   },
   "dependencies": {
     "firebase": "^12.10.0",
