@@ -4,6 +4,7 @@ import { createCustomer } from './triggers/createCustomer';
 import { onUserDeleted, onCustomerDataDeleted } from './triggers/onUserDeleted';
 import { razorpayWebhookHandler } from './api';
 import { createPlan, syncPlans } from './admin';
+import { syncClaimsOnSubscriptionChange } from './triggers/syncClaims';
 
 import { logs } from './logs';
 
@@ -33,6 +34,7 @@ export {
 
     // Webhooks
     razorpayWebhookHandler,
+    syncClaimsOnSubscriptionChange,
 
     // Admin Calls
     createPlan,

@@ -6,43 +6,6 @@ import { logs } from '../logs';
 import { WebhookEvent } from '../api';
 import { fetchWithBackoff, isTransientError } from '../utils/retry';
 
-/**
- * Incrementally sync custom claims based on the Razorpay API response.
- * Follows the user directive to avoid full collection scans.
- */
-export async function syncCustomClaims(
-    uid: string,
-    role: string,
-    isAdding: boolean
-): Promise<void> {
-    if (!config.syncCustomClaims) {
-        logs.info(`Custom claims sync disabled. Skipping claim update for user: ${uid}`);
-        return;
-    }
-
-    try {
-        const userRec = await admin.auth().getUser(uid);
-        const existingClaims = userRec.customClaims || {};
-
-        let updated = false;
-        if (isAdding && !existingClaims[role]) {
-            existingClaims[role] = true;
-            updated = true;
-        } else if (!isAdding && existingClaims[role]) {
-            delete existingClaims[role];
-            updated = true;
-        }
-
-        if (updated) {
-            await admin.auth().setCustomUserClaims(uid, existingClaims);
-            logs.info(`Synced claims for ${uid}: [${Object.keys(existingClaims).join(', ')}]`);
-        }
-    } catch (error) {
-        // User might have been deleted mid-flight, simply ignore
-        logs.error(new Error(`Failed to sync claims for ${uid}: ${error}`));
-    }
-}
-
 export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.firestore.Firestore, razorpayClient: InstanceType<typeof Razorpay>) => {
     const webhookSubscription = event.payload.subscription?.entity;
 
@@ -102,18 +65,6 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
             return;
         }
 
-        const docData = existingDoc.data();
-        const role = docData?.firebaseRole ? String(docData.firebaseRole) : undefined;
-
-        let shouldSetClaims = false;
-        let shouldRemoveClaims = false;
-
-        if (newStatus === 'active' || newStatus === 'authenticated') {
-            shouldSetClaims = true;
-        } else if (newStatus === 'cancelled' || newStatus === 'halted' || newStatus === 'paused' || newStatus === 'completed') {
-            shouldRemoveClaims = true;
-        }
-
         // Write atomically and forcefully overwrite any stuck states ('processing')
         const dataToWrite: any = {
             subscription_id: subscriptionEntity.id,
@@ -155,15 +106,6 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
         }
         
         await batch.commit();
-
-        // Sync Custom Claims AFTER the atomic commit succeeds
-        if (role) {
-            if (shouldSetClaims) {
-                await syncCustomClaims(uid, role, true);
-            } else if (shouldRemoveClaims) {
-                await syncCustomClaims(uid, role, false);
-            }
-        }
 
         logs.webhookProcessed(event.event, subscriptionEntity.id);
     } catch (error: any) {
