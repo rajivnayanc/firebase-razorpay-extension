@@ -14,9 +14,12 @@ jest.mock('firebase-admin', () => {
         collection: jest.fn().mockReturnThis(),
         doc: jest.fn().mockReturnThis(),
         set: jest.fn().mockResolvedValue({}),
+        create: jest.fn().mockResolvedValue({}),
         runTransaction: jest.fn(async (fn: any) => fn()),
     };
     return {
+        apps: [],
+        initializeApp: jest.fn(),
         firestore: Object.assign(jest.fn(() => firestoreMock), {
             FieldValue: { serverTimestamp: jest.fn(() => 'server_time') }
         }),
@@ -162,20 +165,26 @@ describe('Webhook API', () => {
     });
 
     it('Behavior: should handle internal errors gracefully', async () => {
-        // Force an error by passing a bad body that might break a handler
+        // Force an error by making getRazorpay throw an error inside the handler
         const req: any = {
             method: 'POST',
-            body: { event: 'subscription.broken' },
-            rawBody: Buffer.from(JSON.stringify({ event: 'subscription.broken' })),
-            headers: { 'x-razorpay-signature': crypto.createHmac('sha256', 'test_webhook_secret').update(JSON.stringify({ event: 'subscription.broken' })).digest('hex') }
+            body: { event: 'subscription.active' },
+            rawBody: Buffer.from(JSON.stringify({ event: 'subscription.active' })),
+            headers: { 'x-razorpay-signature': crypto.createHmac('sha256', 'test_webhook_secret').update(JSON.stringify({ event: 'subscription.active' })).digest('hex') }
         };
         const res: any = {
             status: jest.fn().mockReturnThis(),
             send: jest.fn(),
         };
 
+        const admin = require('firebase-admin');
+        const firestoreMock = admin.firestore();
+        const retryableError = new Error('Database Error');
+        (retryableError as any).code = 'DEADLINE_EXCEEDED';
+        firestoreMock.create.mockRejectedValueOnce(retryableError);
+
         await webhookHandlerFunc(req, res);
-        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.status).toHaveBeenCalledWith(500);
         expect(res.send).toHaveBeenCalledWith('Webhook processing failed internally');
     });
 

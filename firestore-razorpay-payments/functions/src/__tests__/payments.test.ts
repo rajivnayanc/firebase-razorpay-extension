@@ -52,9 +52,9 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             }
         };
 
-        await handlePaymentEvent(mockEvent);
-
         const admin = require('firebase-admin');
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
+
         const firestoreMock = admin.firestore();
 
         expect(razorpayApi.payments.fetch).toHaveBeenCalledWith('pay_123');
@@ -83,8 +83,8 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             }
         };
 
-        await handlePaymentEvent(mockEvent);
         const admin = require('firebase-admin');
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
         expect(admin.firestore().set).not.toHaveBeenCalled();
     });
 
@@ -95,8 +95,9 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             payload: { payment: {}, order: {} }
         };
 
-        await handlePaymentEvent(mockEvent as any);
         const admin = require('firebase-admin');
+        const razorpayApi = getRazorpay();
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
         expect(admin.firestore().set).not.toHaveBeenCalled();
     });
 
@@ -110,8 +111,8 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             payload: { payment: { entity: { id: 'pay_123' } } }
         };
 
-        await handlePaymentEvent(mockEvent as any);
         const admin = require('firebase-admin');
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
         expect(admin.firestore().set).not.toHaveBeenCalled();
     });
 
@@ -125,8 +126,8 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             payload: { payment: { entity: { id: 'pay_123' } } }
         };
 
-        await handlePaymentEvent(mockEvent as any);
         const admin = require('firebase-admin');
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
         expect(admin.firestore().set).not.toHaveBeenCalled();
     });
 
@@ -144,8 +145,8 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             payload: { payment: { entity: { id: 'pay_fail' } } }
         };
 
-        await handlePaymentEvent(mockEvent as any);
         const admin = require('firebase-admin');
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
         expect(admin.firestore().set).toHaveBeenCalledWith(
             expect.objectContaining({ status: 'failed' }),
             { merge: true }
@@ -166,8 +167,8 @@ describe('Webhook Handler: payments (with API as source of truth)', () => {
             payload: { order: { entity: { id: 'order_paid' } } }
         };
 
-        await handlePaymentEvent(mockEvent as any);
         const admin = require('firebase-admin');
+        await handlePaymentEvent(mockEvent as any, admin.firestore(), razorpayApi);
         expect(admin.firestore().set).toHaveBeenCalledWith(
             expect.objectContaining({ status: 'paid', order_id: 'order_paid' }),
             { merge: true }

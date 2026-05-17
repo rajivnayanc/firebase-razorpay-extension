@@ -23,6 +23,14 @@ export const createSubscriptionHandler = async (event: any) => {
     }
 
     const currentData = snap.data();
+    if (!currentData) return;
+
+    // Skip trigger execution if this is an already processed or synced subscription doc
+    if (currentData.subscription_id || currentData.status === 'created' || currentData.status === 'active') {
+        logs.info(`Subscription ${event.params.id} for user ${event.params.uid} is already created/active. Skipping trigger.`);
+        return;
+    }
+
     const db = admin.firestore();
 
     // Fetch the canonical customer document using the trusted UID from the document path

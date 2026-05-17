@@ -9,6 +9,7 @@
         "target": "es2017",
         "esModuleInterop": true,
         "resolveJsonModule": true,
+        "rootDir": "src",
         "types": [
             "jest",
             "node"
@@ -16,7 +17,6 @@
     },
     "compileOnSave": true,
     "include": [
-        "src",
-        "integration-tests"
+        "src"
     ]
 }

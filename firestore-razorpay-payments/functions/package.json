@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Run Payments with Razorpay Extension",
   "main": "lib/index.js",
-  "scripts": {
+    "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
@@ -14,7 +14,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:integration": "jest --config integration-tests/jest.config.js --forceExit --detectOpenHandles",
-    "test:integration:emulator": "firebase emulators:exec --project demo-test --config integration-tests/firebase.json \"npm run test:integration\""
+    "test:integration:emulator": "firebase emulators:exec --project demo-test --config integration-tests/firebase.json \"npm run test:integration\" > emulator.log 2>&1"
   },
   "engines": {
     "node": "22"

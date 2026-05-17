@@ -265,6 +265,14 @@ params:
     default: "true"
     required: true
 
+  - param: RAZORPAY_API_URL
+    label: Razorpay API URL
+    description: >-
+      The base URL of the Razorpay API. Only configure this for local testing/mocking.
+      Defaults to empty, which uses the official Razorpay API base.
+    type: string
+    required: false
+
 
 events:
   - type: com.razorpay.v1.order.paid

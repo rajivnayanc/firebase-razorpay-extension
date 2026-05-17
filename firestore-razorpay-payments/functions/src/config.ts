@@ -1,8 +1,23 @@
 import { getEventarc } from 'firebase-admin/eventarc';
 import { defineSecret } from 'firebase-functions/params';
+import * as admin from 'firebase-admin';
 
 export const razorpayKeySecret = defineSecret('RAZORPAY_KEY_SECRET');
 export const razorpayWebhookSecret = defineSecret('RAZORPAY_WEBHOOK_SECRET');
+
+// Initialize Firebase Admin globally and configure Firestore settings
+if (!admin.apps || !admin.apps.length) {
+    if (typeof admin.initializeApp === 'function') {
+        admin.initializeApp();
+    }
+}
+try {
+    if (typeof admin.firestore === 'function') {
+        admin.firestore().settings({ ignoreUndefinedProperties: true });
+    }
+} catch (e) {
+    // Ignore already initialized settings error
+}
 
 export default {
     // Extension parameters

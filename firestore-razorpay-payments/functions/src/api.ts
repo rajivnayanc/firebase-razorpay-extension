@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import Razorpay from 'razorpay';
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyWebhookSignature } from './security';
 import config, { getEventChannel, razorpayKeySecret, razorpayWebhookSecret } from './config';
 import { logs } from './logs';
@@ -42,6 +43,12 @@ export function getRazorpay() {
             key_id: config.razorpayKeyId,
             key_secret: config.razorpayKeySecret,
         });
+
+        // Allow overriding the API base URL (for emulator/integration testing)
+        if (process.env.RAZORPAY_API_URL) {
+            console.log("[api.ts] Initializing Razorpay client. RAZORPAY_API_URL:", process.env.RAZORPAY_API_URL);
+            (razorpay as any).api.rq.defaults.baseURL = process.env.RAZORPAY_API_URL;
+        }
     }
     return razorpay;
 }
@@ -84,18 +91,19 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
         return;
     }
 
+    const eventId = (req.headers['x-razorpay-event-id'] as string) || event.id || `evt_${event.event}_${Date.now()}`;
     const db = admin.firestore();
 
     // Idempotency: Prevent Webhook Replay Attacks
-    const webhookEventRef = db.collection('webhook_events').doc(event.id);
+    const webhookEventRef = db.collection('webhook_events').doc(eventId);
     try {
         await webhookEventRef.create({
             event: event.event,
-            processed_at: admin.firestore.FieldValue.serverTimestamp(),
+            processed_at: FieldValue.serverTimestamp(),
         });
     } catch (e: any) {
         if (e.code === 6) { // ALREADY_EXISTS in gRPC / Firestore
-            logs.info(`Webhook event ${event.id} already processed. Skipping.`);
+            logs.info(`Webhook event ${eventId} already processed. Skipping.`);
             res.status(200).send('Already Processed');
             return;
         }
@@ -106,7 +114,7 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
 
     try {
         const rzpClient = getRazorpay();
-        
+
         // Route the event to the correct handler with Dependency Injection
         if (event.event.startsWith('subscription.')) {
             await handleSubscriptionEvent(event, db, rzpClient);
@@ -125,18 +133,18 @@ export const webhookHandlerFunc = async (req: any, res: any) => {
 
         res.status(200).send('Webhook Processed');
     } catch (err: any) {
-        logs.error(`Webhook processing failed for event: ${event.event} (ID: ${event.id || 'unknown'})`, err);
-        
+        logs.error(`Webhook processing failed for event: ${event.event} (ID: ${eventId})`, err);
+
         // Return 500 for transient/retryable errors to allow Razorpay webhook retries
         const isRetryable = err.code === 'DEADLINE_EXCEEDED' || err.code === 'UNAVAILABLE' || err.message?.includes('timeout') || err.message?.includes('network');
-        
+
         if (isRetryable) {
             // Remove the idempotency lock so it can be retried
-            await webhookEventRef.delete().catch(() => {});
+            await webhookEventRef.delete().catch(() => { });
             res.status(500).send('Webhook processing failed internally - retryable');
         } else {
             // Return 200 so Razorpay doesn't retry forever on permanent logic errors.
-            logs.error(`PERMANENT WEBHOOK FAILURE — event ${event.event} will NOT be retried. Manual investigation required.`);
+            logs.error(`PERMANENT WEBHOOK FAILURE — event ${event.event} (ID: ${eventId}) will NOT be retried. Manual investigation required.`);
             res.status(200).send('Webhook processing failed internally');
         }
     }

@@ -1,6 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as functions from 'firebase-functions/v1';
-import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import config from '../config';
 import { logs } from '../logs';
@@ -17,10 +16,10 @@ const db = admin.firestore();
  * Deletes the Razorpay customer object and cancels subscriptions when the
  * customer document in Cloud Firestore is deleted.
  */
-export const onCustomerDataDeleted = onDocumentDeleted(
-    `${config.customersCollectionPath}/{uid}`,
-    async (event) => {
-        const uid = event.params.uid;
+export const onCustomerDataDeleted = functions.firestore
+    .document(`${config.customersCollectionPath}/{uid}`)
+    .onDelete(async (snapshot, context) => {
+        const uid = context.params.uid;
         logs.info(`Customer document deleted for user ${uid}. Cleaning up...`);
 
         try {

@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import config, { razorpayKeySecret, razorpayWebhookSecret } from '../config';
 import { getRazorpay } from '../api';
 import { logs } from '../logs';
@@ -40,7 +41,7 @@ export const cancelSubscription = onCall({ secrets: [razorpayKeySecret, razorpay
         
         await docRef.set({
             status: cancelledSubscription.status,
-            updated_at: admin.firestore.FieldValue.serverTimestamp()
+            updated_at: FieldValue.serverTimestamp()
         }, { merge: true });
 
         logs.info(`Successfully cancelled subscription ${subscriptionId} for user ${uid}`);
@@ -88,7 +89,7 @@ export const updateSubscriptionPlan = onCall({ secrets: [razorpayKeySecret, razo
         await docRef.set({
             plan_id: updatedSubscription.plan_id,
             status: updatedSubscription.status,
-            updated_at: admin.firestore.FieldValue.serverTimestamp()
+            updated_at: FieldValue.serverTimestamp()
         }, { merge: true });
 
         logs.info(`Successfully updated subscription ${subscriptionId} for user ${uid} to plan ${planId}`);

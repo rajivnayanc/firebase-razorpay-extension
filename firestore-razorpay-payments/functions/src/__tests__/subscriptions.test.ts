@@ -59,6 +59,7 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         
         const docMock = admin.firestore().doc();
         docMock.get.mockResolvedValue({ exists: false, empty: true, docs: [], data: () => null });
+        mockAuth.getUser.mockResolvedValue({ customClaims: {} });
     });
 
     it('Behavior: should set custom claims on subscription.activated', async () => {
@@ -82,12 +83,12 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
             }
         };
 
-        await handleSubscriptionEvent(mockEvent);
+        const admin = require('firebase-admin');
+        await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
 
         expect(razorpayApi.subscriptions.fetch).toHaveBeenCalledWith('sub_123');
         expect(mockAuth.setCustomUserClaims).toHaveBeenCalledWith('user_123', { premium: true });
         
-        const admin = require('firebase-admin');
         const batch = admin.firestore().batch();
         expect(batch.set).toHaveBeenCalledTimes(1); // Writing sub doc
     });
@@ -95,20 +96,9 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
     it('Behavior: should remove custom claims on subscription.cancelled', async () => {
         const admin = require('firebase-admin');
         const docMock = admin.firestore().doc();
-        
-        // Sequential .get() calls:
-        // 1. subQuery (find sub doc by razorpay id)
-        // 2. allSubs (syncCustomClaims fetching all for role derivation)
-        docMock.get
-            .mockResolvedValueOnce({ empty: true, docs: [] }) // subQuery: not found, falls back to using razorpay id as doc id
-            .mockResolvedValueOnce({ 
-                docs: [{ 
-                    data: () => ({ 
-                        status: 'cancelled', 
-                        notes: { firebaseRole: 'premium' }
-                    }) 
-                }] 
-            }); // syncCustomClaims: sees the cancelled sub
+        docMock.get.mockResolvedValueOnce({ empty: true, docs: [] });
+
+        mockAuth.getUser.mockResolvedValueOnce({ customClaims: { premium: true } });
 
         const razorpayApi = getRazorpay();
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
@@ -120,18 +110,12 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         const mockEvent = {
             id: 'evt_sub_cancel',
             event: 'subscription.cancelled',
-            payload: {
-                subscription: {
-                    entity: { id: 'sub_123' }
-                },
-                payment: null
-            }
+            payload: { subscription: { entity: { id: 'sub_123' } }, payment: null }
         };
 
-        await handleSubscriptionEvent(mockEvent);
+        await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
 
         expect(mockAuth.getUser).toHaveBeenCalledWith('user_123');
-        // Claims should be empty because the only sub is cancelled
         expect(mockAuth.setCustomUserClaims).toHaveBeenCalledWith('user_123', {});
     });
 
@@ -160,13 +144,13 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
             }
         };
 
-        await handleSubscriptionEvent(mockEvent);
+        const admin = require('firebase-admin');
+        await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
         
         expect(razorpayApi.subscriptions.fetch).toHaveBeenCalledWith('sub_123');
         expect(razorpayApi.payments.fetch).toHaveBeenCalledWith('pay_001');
 
         // sub doc (batch.set) and payment subcollection doc (batch.set)
-        const admin = require('firebase-admin');
         const batch = admin.firestore().batch();
         expect(batch.set).toHaveBeenCalledTimes(2);
         expect(batch.set).toHaveBeenCalledWith(
@@ -176,16 +160,10 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         );
     });
 
-    it('Behavior: should strictly derive claims resolving race conditions (syncCustomClaims)', async () => {
+    it('Behavior: should incrementally add claims (O(1) logic)', async () => {
         const admin = require('firebase-admin');
         
-        // Mock the subscriptions get() query to return two active subscriptions with different roles
-        const mockSub1 = { data: () => ({ status: 'active', notes: { firebaseRole: 'premium' } }) };
-        const mockSub2 = { data: () => ({ status: 'active', notes: { firebaseRole: 'editor' } }) };
-        
-        admin.firestore().doc().get
-            .mockResolvedValueOnce({ empty: true, docs: [] }) // subQuery
-            .mockResolvedValueOnce({ docs: [mockSub1, mockSub2] }); // allSubs
+        mockAuth.getUser.mockResolvedValueOnce({ customClaims: { premium: true } });
 
         const razorpayApi = getRazorpay();
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
@@ -200,29 +178,17 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
             payload: { subscription: { entity: { id: 'sub_123' } }, payment: null }
         };
 
-        await handleSubscriptionEvent(mockEvent);
+        await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
 
-        // Pre-existing non-subscription claims are kept, plus BOTH active roles are set.
-        // We know from setup mockAuth.getUser returns { customClaims: { 'premium': true } }.
-        // Actually, the new logic collects both 'premium' and 'editor' from the active docs,
-        // and preserves 'premium' if it was already there (or derives it).
         expect(mockAuth.setCustomUserClaims).toHaveBeenCalledWith('user_123', {
             premium: true,
             editor: true
         });
     });
 
-    it('Behavior: should only remove the specific claim when one of multiple subs is cancelled', async () => {
+    it('Behavior: should incrementally remove specific claim (O(1) logic)', async () => {
         const admin = require('firebase-admin');
         
-        // Mock the subscriptions get() query: one cancelled, one active
-        const mockSubCancelled = { data: () => ({ status: 'cancelled', notes: { firebaseRole: 'premium' } }) };
-        const mockSubActive = { data: () => ({ status: 'active', notes: { firebaseRole: 'editor' } }) };
-        
-        admin.firestore().doc().get
-            .mockResolvedValueOnce({ empty: true, docs: [] }) // subQuery
-            .mockResolvedValueOnce({ docs: [mockSubCancelled, mockSubActive] }); // allSubs
-
         mockAuth.getUser.mockResolvedValueOnce({ customClaims: { premium: true, editor: true, admin: true } });
 
         const razorpayApi = getRazorpay();
@@ -238,11 +204,8 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
             payload: { subscription: { entity: { id: 'sub_123' } }, payment: null }
         };
 
-        await handleSubscriptionEvent(mockEvent);
+        await handleSubscriptionEvent(mockEvent as any, admin.firestore(), razorpayApi);
 
-        // 'admin' is preserved (non-subscription).
-        // 'editor' is preserved (active subscription).
-        // 'premium' is removed (no active subscriptions with it).
         expect(mockAuth.setCustomUserClaims).toHaveBeenCalledWith('user_123', {
             admin: true,
             editor: true
