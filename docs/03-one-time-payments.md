@@ -51,7 +51,7 @@ When a new checkout session document is written, the `createOrder` Cloud Functio
 1.  **Direct Amount Guard**: If the client attempts to write an `amount` property in the checkout document, the function immediately terminates, updates the document status to `failed`, and logs a security violation:
     `Providing amount directly is not allowed. Provide a productId instead.`
 2.  **Product Verification**: The function fetches the product document from the secure `/products` collection. If the product does not exist, or does not have a valid positive amount, it marks the status as `failed`.
-3.  **Concurrency Lock**: Using a Firestore transaction, the document is locked under `status: 'processing'` with a `processing_at` timestamp. This prevents double execution if multiple triggers fire.
+3.  **Concurrency Lock**: Using a Firestore transaction, the document is locked under `status: 'processing'` with a `processing_at` timestamp. This prevents double execution if multiple triggers fire, and features a 2-minute zombie lock escape hatch to automatically recover if a cloud function crashes during processing.
 4.  **Lazy Customer Sync**: If the customer document doesn't have a `razorpay_customer_id`, the function lazily calls Razorpay's API to register the user, saving their Customer ID back to the Firestore customer document.
 
 ---

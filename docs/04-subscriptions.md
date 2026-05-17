@@ -122,9 +122,9 @@ The `createSubscription` Cloud Function intercepts this document creation and pr
     `Providing plan_id directly is not allowed. Provide productId and interval instead.`
 2.  **Catalog-Driven Plan Resolution**: The function fetches the product document from the secure `/products` collection. It automatically resolves the Razorpay plan ID based on the client's requested `interval` (looks up `allowedPlans[interval]`). If only one plan is linked under the product, it uses that automatically as a fallback.
 3.  **Secure Role Fetching**: Retrieves `firebaseRole` directly from the secure Firestore product catalog, mapping it to the subscription document to prepare for custom claim issuance.
-4.  **Transaction Lock**: Sets status to `processing` inside a Firestore transaction.
-5.  **Razorpay API Subscription Call**: Issues a subscription creation request to Razorpay, locking quantity to `1` and notes to `{ uid, subscriptionId, productId }`.
-6.  **Firestore Sync**: Writes the subscription ID, short redirect URL, and charge metadata back to the document:
+4.  **Transaction Lock**: Sets status to `processing` inside a Firestore transaction with a 2-minute zombie-lock escape hatch.
+5.  **Razorpay API Subscription Call**: Issues a subscription creation request to Razorpay, securely locking the quantity to `1`.
+6.  **Firestore Canonical Sync**: Writes the subscription ID, short redirect URL, and charge metadata back to the document, and creates a canonical mapping under `/customers/{uid}/subscriptions/{subscriptionId}` to ensure future webhook events can securely locate the record using the verified `customer_id`.
 
 ```json
 {

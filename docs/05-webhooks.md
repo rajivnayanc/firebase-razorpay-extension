@@ -93,26 +93,26 @@ This allows you to construct billing statements or payment history views inside 
 
 ## 🛡️ 5. Role-Based Access Control Custom Claims Sync
 
-When a subscription's status changes, the extension automatically manages access control using **Firebase Auth Custom Claims**.
+When a subscription's status changes in Firestore, a dedicated background trigger (`syncClaimsOnSubscriptionChange`) automatically manages access control using **Firebase Auth Custom Claims**. This ensures that even if multiple webhooks fire concurrently, the user's claims are perfectly synchronized without race conditions.
 
 ```mermaid
 stateGraphic
     [*] --> created
-    created --> active : Webhook Sync
-    active --> GrantClaims : role added
-    active --> paused/cancelled : Webhook Sync
-    paused/cancelled --> RevokeClaims : role deleted
+    created --> active : Webhook Sync Updates Doc
+    active --> GrantClaims : Background Trigger detects change & adds role
+    active --> paused/cancelled : Webhook Sync Updates Doc
+    paused/cancelled --> RevokeClaims : Background Trigger detects change & removes role
 ```
 
-### 🔒 Secure Claim Resolution
+### 🔒 Secure Claim Resolution & TOCTOU Prevention
 
-To prevent malicious users from spoofing claims or hijacking premium subscription tiers, the extension:
-1.  **Ignores** any roles or claims sent in the webhook payload notes.
-2.  Fetches the existing, trusted subscription document from Firestore (originally written securely by `createSubscription` trigger from `/products` collection).
-3.  Determines whether the role is active:
-    *   **Grant Role**: Status is `active` or `authenticated`.
-    *   **Revoke Role**: Status is `cancelled`, `halted`, `paused`, or `completed`.
-4.  Saves claims atomically without losing other pre-existing claims on the user record.
+To prevent malicious users from spoofing claims and to fix Time-Of-Check to Time-Of-Use (TOCTOU) race conditions during concurrent webhook deliveries, the extension:
+1.  **Ignores Payload Claims**: Strictly ignores any roles or claims sent in the webhook payload notes.
+2.  **Reads Aggregate State**: When a subscription document changes, the trigger fetches *all* subscriptions for the user to determine the aggregate active roles.
+3.  **Determines Active Roles**:
+    *   **Grant Role**: Any subscription document has a status of `active` or `authenticated`.
+    *   **Revoke Role**: No subscription documents exist with an active status for a given role.
+4.  **Atomic Merge**: Saves claims atomically to Firebase Auth without losing other pre-existing claims (such as `admin`) on the user record.
 
 ---
 
