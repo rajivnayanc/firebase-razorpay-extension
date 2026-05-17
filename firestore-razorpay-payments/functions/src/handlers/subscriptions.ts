@@ -5,6 +5,8 @@ import config from '../config';
 import { logs } from '../logs';
 import { WebhookEvent } from '../api';
 import { fetchWithBackoff, isTransientError } from '../utils/retry';
+import { getUidByCustomerId } from '../utils/customerMapping';
+
 
 export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.firestore.Firestore, razorpayClient: InstanceType<typeof Razorpay>) => {
     const webhookSubscription = event.payload.subscription?.entity;
@@ -26,9 +28,15 @@ export const handleSubscriptionEvent = async (event: WebhookEvent, db: admin.fir
         return; // Don't throw for permanent errors (like 404), skip processing
     }
 
-    const uid = String(subscriptionEntity.notes?.uid);
-    if (!uid || uid === 'undefined') {
-        logs.error(new Error(`No UID found in subscription notes for ${subscriptionEntity.id}`));
+    const customerId = subscriptionEntity.customer_id;
+    if (!customerId) {
+        logs.error(new Error(`No customer_id found on subscription ${subscriptionEntity.id}. Cannot resolve UID.`));
+        return;
+    }
+
+    const uid = await getUidByCustomerId(customerId);
+    if (!uid) {
+        logs.error(new Error(`No Firebase UID found mapped to Razorpay Customer ID ${customerId} for subscription ${subscriptionEntity.id}`));
         return;
     }
 

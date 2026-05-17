@@ -14,6 +14,11 @@ jest.mock('../api', () => {
     };
 });
 
+jest.mock('../utils/customerMapping', () => ({
+    getUidByCustomerId: jest.fn().mockResolvedValue('user_123')
+}));
+
+
 jest.mock('firebase-admin', () => {
     const docMock = {
         get: jest.fn().mockResolvedValue({ exists: false, empty: true, docs: [], data: () => null }),
@@ -67,7 +72,8 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
             id: 'sub_123',
             status: 'active',
-            notes: { uid: 'user_123', firebaseRole: 'premium' }
+            customer_id: 'cust_123',
+            notes: { firebaseRole: 'premium' }
         });
 
 
@@ -103,7 +109,8 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
             id: 'sub_123',
             status: 'cancelled',
-            notes: { uid: 'user_123', firebaseRole: 'premium' }
+            customer_id: 'cust_123',
+            notes: { firebaseRole: 'premium' }
         });
 
         const mockEvent = {
@@ -125,7 +132,8 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
             id: 'sub_123',
             status: 'active',
-            notes: { uid: 'user_123' }
+            customer_id: 'cust_123',
+            notes: {}
         });
         (razorpayApi.payments.fetch as jest.Mock).mockResolvedValueOnce({
             id: 'pay_001',
@@ -170,7 +178,8 @@ describe('Webhook Handler: subscriptions (with API as source of truth)', () => {
         (razorpayApi.subscriptions.fetch as jest.Mock).mockResolvedValueOnce({
             id: 'sub_attacker',
             status: 'active',
-            notes: { uid: 'attacker_uid', firebaseRole: 'admin' }
+            customer_id: 'cust_attacker',
+            notes: { firebaseRole: 'admin' }
         });
 
         const mockEvent = {

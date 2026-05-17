@@ -7,6 +7,8 @@ import config from '../config';
 import { logs } from '../logs';
 import { WebhookEvent } from '../api';
 import { fetchWithBackoff, isTransientError } from '../utils/retry';
+import { getUidByCustomerId } from '../utils/customerMapping';
+
 
 export const handlePaymentEvent = async (event: WebhookEvent, db: admin.firestore.Firestore, razorpayClient: InstanceType<typeof Razorpay>) => {
     const webhookPaymentId = event.payload.payment?.entity?.id || event.payload.payment?.id;
@@ -49,8 +51,25 @@ export const handlePaymentEvent = async (event: WebhookEvent, db: admin.firestor
 
     // We rely on order properties being passed down via notes during createOrder
     const notes = fetchedEntity.notes;
-    const uid = notes?.uid ? String(notes.uid) : undefined;
     const sessionId = notes?.sessionId ? String(notes.sessionId) : undefined;
+    
+    // Attempt strict mapping via customer_id first
+    let uid: string | undefined;
+    const customerId = (fetchedEntity as any).customer_id;
+    if (customerId) {
+        const mappedUid = await getUidByCustomerId(customerId);
+        if (mappedUid) {
+            uid = mappedUid;
+        } else {
+            logs.error(new Error(`Failed to map Razorpay Customer ID ${customerId} to a Firebase UID. Rejecting webhook.`));
+            return;
+        }
+    }
+
+    // Fallback to notes.uid for Orders if customer_id is absent (Razorpay Orders API lacks customer_id)
+    if (!uid && notes?.uid) {
+        uid = String(notes.uid);
+    }
 
     if (!uid || !sessionId) {
         // If there's no mapping to our Firestore structure, simply ignore
