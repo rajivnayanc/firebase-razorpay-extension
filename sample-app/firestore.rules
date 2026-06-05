@@ -35,6 +35,12 @@ service cloud.firestore {
 
         // Only the extension (Admin SDK) updates checkout sessions
         allow update, delete: if false;
+
+        // Response documents from Razorpay (created by backend)
+        match /razorpay_responses/{docId} {
+          allow read: if request.auth.uid == uid;
+          allow write: if false;
+        }
       }
 
       // ── Subscriptions ──
@@ -60,6 +66,12 @@ service cloud.firestore {
 
         // Payment sub-documents under subscriptions
         match /payments/{paymentId} {
+          allow read: if request.auth.uid == uid;
+          allow write: if false;
+        }
+
+        // Response documents from Razorpay (created by backend)
+        match /razorpay_responses/{docId} {
           allow read: if request.auth.uid == uid;
           allow write: if false;
         }

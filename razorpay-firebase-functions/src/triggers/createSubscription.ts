@@ -17,6 +17,12 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
             return;
         }
 
+        // If the document ID starts with 'sub_', it's a canonical subscription document
+        // created by this trigger, not a draft subscription request. Exit silently.
+        if (event.params.id.startsWith('sub_')) {
+            return;
+        }
+
         const currentData = snap.data() as SubscriptionDoc | undefined;
         if (!currentData) return;
 

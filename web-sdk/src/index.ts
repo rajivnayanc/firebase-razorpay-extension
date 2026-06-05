@@ -197,7 +197,7 @@ export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
             unsubCollection = onSnapshot(subscriptionsCol, (snap) => {
                 const canonicalDoc = snap.docs.find(item => {
                     const data = item.data() as SubscriptionDoc;
-                    return data.draftId === draftId;
+                    return data.draftId === draftId && item.id !== draftId;
                 });
 
                 if (!canonicalDoc) return;
