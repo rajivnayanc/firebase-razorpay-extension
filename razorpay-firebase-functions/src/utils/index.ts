@@ -1,4 +1,6 @@
+import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { RazorpaySyncConfig } from '../types';
 
 /**
  * Helper to sanitize Razorpay plan data for Firestore storage.
@@ -39,4 +41,42 @@ export const generatePlanKey = (plan: any) => {
         return `${plan.interval}_${plan.period}`;
     }
     return plan.period;
+};
+
+/**
+ * Syncs a Razorpay plan to a Firestore product document.
+ * Creates or updates the product document with the plan's details.
+ * Shared between buildCreatePlan and buildSyncPlans.
+ */
+export const syncPlanToProduct = async (
+    plan: any,
+    db: admin.firestore.Firestore,
+    config: RazorpaySyncConfig
+): Promise<any> => {
+    const productId = generateProductId(plan);
+    const planKey = generatePlanKey(plan);
+    const docRef = db.collection(config.productsCollection).doc(productId);
+
+    const productSnap = await docRef.get();
+    const productData = productSnap.data() || {
+        id: productId,
+        name: plan.item?.name || 'Razorpay Product',
+        description: plan.item?.description || '',
+        active: true,
+        allowedPlans: {},
+        created_at: FieldValue.serverTimestamp(),
+    };
+
+    productData.allowedPlans = productData.allowedPlans || {};
+    productData.allowedPlans[planKey] = plan.id;
+
+    productData.plans = productData.plans || {};
+    productData.plans[planKey] = sanitizePlan(plan);
+
+    productData.type = 'subscription';
+    productData.updated_at = FieldValue.serverTimestamp();
+    productData._synced_via = 'admin_api';
+
+    await docRef.set(productData, { merge: true });
+    return productData;
 };

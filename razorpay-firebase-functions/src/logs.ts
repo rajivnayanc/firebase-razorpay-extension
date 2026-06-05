@@ -1,11 +1,6 @@
 import { logger } from 'firebase-functions';
 
 export const logs = {
-    obfuscateKey: (key: string) => {
-        if (!key) return '';
-        return `...${key.substring(key.length - 4)}`;
-    },
-
     init: () => {
         logger.info('Initializing Razorpay Firebase package');
     },

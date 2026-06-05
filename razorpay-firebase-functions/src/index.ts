@@ -1,14 +1,13 @@
 import Razorpay from 'razorpay';
 import { getEventarc, Channel } from 'firebase-admin/eventarc';
-import { RazorpayUserConfig, RazorpaySyncConfig } from '@/types';
-import { logs } from '@/logs';
+import { RazorpayUserConfig, RazorpaySyncConfig } from './types';
+import { logs } from './logs';
 
 // Import builders
 import { buildCreateOrder } from './triggers/createOrder';
 import { buildCreateSubscription } from './triggers/createSubscription';
 import { buildCreateCustomer } from './triggers/createCustomer';
 import { buildOnCustomerDataDeleted, buildOnUserDeleted } from './triggers/onUserDeleted';
-import { buildSyncClaimsOnSubscriptionChange } from './triggers/syncClaims';
 import { buildCancelSubscription, buildUpdateSubscriptionPlan } from './callables/subscriptions';
 import { buildCreatePlan, buildSyncPlans } from './admin';
 import { buildWebhookHandler } from './api';
@@ -26,6 +25,10 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         logs.error(new Error(`keyId seems malformed (expected to start with 'rzp_'). Configuration is likely invalid.`));
     }
 
+    if (!userConfig.webhookSecret) {
+        logs.error(new Error('webhookSecret is missing. Webhook signature verification will reject all incoming events.'));
+    }
+
     // 3. Apply defaults
     const config: RazorpaySyncConfig = {
         keyId: userConfig.keyId,
@@ -34,7 +37,6 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         customersCollection: userConfig.customersCollection || 'customers',
         productsCollection: userConfig.productsCollection || 'products',
         syncCustomers: userConfig.syncCustomers ?? true,
-        syncCustomClaims: userConfig.syncCustomClaims ?? true,
         eventarcChannel: userConfig.eventarcChannel,
         allowedEventTypes: userConfig.allowedEventTypes,
     };
@@ -45,10 +47,14 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         key_secret: config.keySecret,
     });
 
-    // Allow overriding the API base URL (for emulator/integration testing)
+    // Allow overriding the API base URL (for emulator/integration testing ONLY)
     if (process.env.RAZORPAY_API_URL) {
-        logs.info(`Initializing Razorpay client with custom base URL: ${process.env.RAZORPAY_API_URL}`);
-        (rzpClient as any).api.rq.defaults.baseURL = process.env.RAZORPAY_API_URL;
+        if (process.env.NODE_ENV === 'production') {
+            logs.error(new Error('RAZORPAY_API_URL is set in production. This is a security risk (SSRF). Ignoring.'));
+        } else {
+            logs.info(`Initializing Razorpay client with custom base URL: ${process.env.RAZORPAY_API_URL}`);
+            (rzpClient as any).api.rq.defaults.baseURL = process.env.RAZORPAY_API_URL;
+        }
     }
 
     // 5. Initialize Eventarc channel if configured
@@ -68,7 +74,6 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         // Session and Subscription Firestore Triggers
         createOrder: buildCreateOrder(config, rzpClient),
         createSubscription: buildCreateSubscription(config, rzpClient),
-        syncClaimsOnSubscriptionChange: buildSyncClaimsOnSubscriptionChange(config),
 
         // Auth and lifecycle triggers
         createCustomer: buildCreateCustomer(config, rzpClient),

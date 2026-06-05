@@ -2,8 +2,10 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
-import { logs } from '@/logs';
-import { RazorpaySyncConfig } from '@/types';
+import { logs } from '../logs';
+import { RazorpaySyncConfig } from '../types';
+import { ensureRazorpayCustomer } from '../utils/ensureCustomer';
+import { acquireProcessingLock } from '../utils/processingLock';
 
 export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     const createSubscriptionHandler = async (event: any) => {
@@ -23,46 +25,42 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
 
         const db = admin.firestore();
 
-        const customerDoc = await db.collection(config.customersCollection).doc(event.params.uid).get();
-        const customerData = customerDoc.data() || {};
-        let razorpayCustomerId = customerData.razorpay_customer_id;
+        // Ensure Razorpay customer exists via shared utility
+        let razorpayCustomerId: string | null;
+        try {
+            razorpayCustomerId = await ensureRazorpayCustomer(event.params.uid, config, rzp);
+        } catch (customerError: any) {
+            const errMsg = customerError instanceof Error ? customerError.message : (typeof customerError === 'object' ? JSON.stringify(customerError) : String(customerError));
+            logs.error(new Error(`Failed to create Razorpay customer for UID ${event.params.uid}: ${errMsg}`));
+            await snap.ref.update({
+                status: 'failed',
+                error: 'Account setup incomplete. Please contact support.',
+            });
+            return;
+        }
 
         if (!razorpayCustomerId) {
-            if (config.syncCustomers) {
-                try {
-                    const userRec = await admin.auth().getUser(event.params.uid).catch(() => null);
-                    const newCustomer = await rzp.customers.create({
-                        name: userRec?.displayName || customerData.name || 'Firebase User',
-                        email: userRec?.email || customerData.email || undefined,
-                        contact: userRec?.phoneNumber || customerData.phone || undefined,
-                        fail_existing: '0',
-                    } as any);
-                    razorpayCustomerId = newCustomer.id;
-                    await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
-                    logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${event.params.uid}`);
-                } catch (customerError: any) {
-                    const errMsg = customerError instanceof Error ? customerError.message : (typeof customerError === 'object' ? JSON.stringify(customerError) : String(customerError));
-                    logs.error(new Error(`Failed to dynamically create Razorpay customer for UID ${event.params.uid}: ${errMsg}`));
-                    await snap.ref.update({
-                        status: 'failed',
-                        error: 'Account setup incomplete. Please contact support.',
-                    });
-                    return;
-                }
-            } else {
-                logs.error(new Error(`No linked Razorpay customer ID for UID ${event.params.uid} and syncCustomers is disabled.`));
-                await snap.ref.update({
-                    status: 'failed',
-                    error: 'Account setup incomplete. Please contact support.',
-                });
-                return;
-            }
+            logs.error(new Error(`No linked Razorpay customer ID for UID ${event.params.uid}.`));
+            await snap.ref.update({
+                status: 'failed',
+                error: 'Account setup incomplete. Please contact support.',
+            });
+            return;
         }
 
         if (currentData.plan_id) {
             await snap.ref.update({
                 status: 'failed',
                 error: 'Providing plan_id directly is not allowed. Provide productId and interval instead.',
+            });
+            return;
+        }
+
+        // Validate productId (consistent with createOrder.ts)
+        if (!currentData.productId || typeof currentData.productId !== 'string' || currentData.productId.length > 256) {
+            await snap.ref.update({
+                status: 'failed',
+                error: 'Missing or invalid productId. A valid productId string must be provided.',
             });
             return;
         }
@@ -105,34 +103,11 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
             return;
         }
 
-        let secureRole = productData.firebaseRole || productData.notes?.firebaseRole || productData.razorpay_notes_firebaseRole || '';
-
-        let shouldProcess = false;
-        await admin.firestore().runTransaction(async (transaction) => {
-            const docSnap = await transaction.get(snap.ref as admin.firestore.DocumentReference);
-            if (!docSnap.exists) return;
-            const txData = docSnap.data();
-            if (!txData) return;
-
-            if (txData.subscription_id || txData.status === 'created' || txData.status === 'active') {
-                shouldProcess = false;
-                return;
-            }
-
-            if (txData.status === 'processing') {
-                const processingAt = txData.processing_at?.toDate();
-                if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
-                    shouldProcess = false;
-                    return;
-                }
-            }
-
-            transaction.update(snap.ref, {
-                status: 'processing',
-                processing_at: FieldValue.serverTimestamp(),
-            });
-            shouldProcess = true;
-        });
+        // Acquire processing lock to prevent race conditions
+        const shouldProcess = await acquireProcessingLock(
+            snap.ref as admin.firestore.DocumentReference,
+            (data) => !!(data.subscription_id || data.status === 'created' || data.status === 'active')
+        );
 
         if (!shouldProcess) {
             return;
@@ -166,7 +141,6 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
                 remaining_count: subscription.remaining_count,
                 charge_at: subscription.charge_at,
                 created_at: FieldValue.serverTimestamp(),
-                firebaseRole: secureRole,
             };
 
             await snap.ref.update(subscriptionData);

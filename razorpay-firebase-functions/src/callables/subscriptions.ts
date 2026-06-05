@@ -2,8 +2,8 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
-import { logs } from '@/logs';
-import { RazorpaySyncConfig } from '@/types';
+import { logs } from '../logs';
+import { RazorpaySyncConfig } from '../types';
 
 export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return onCall(async (request) => {
@@ -52,10 +52,13 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
             throw new HttpsError('unauthenticated', 'User must be authenticated to update a subscription');
         }
 
-        const { subscriptionId, planId } = request.data;
+        const { subscriptionId, planId, scheduleChangeAt } = request.data;
         if (!subscriptionId || !planId) {
             throw new HttpsError('invalid-argument', 'Both "subscriptionId" and "planId" must be provided');
         }
+
+        // Only allow known-safe values for schedule_change_at
+        const validSchedule = scheduleChangeAt === 'cycle_end' ? 'cycle_end' : 'now';
 
         const db = admin.firestore();
         const docRef = db.collection(config.customersCollection)
@@ -71,7 +74,7 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
         try {
             const updatedSubscription = await rzp.subscriptions.update(subscriptionId, {
                 plan_id: planId,
-                schedule_change_at: 'now'
+                schedule_change_at: validSchedule
             });
 
             await docRef.set({

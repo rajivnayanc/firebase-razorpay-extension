@@ -5,7 +5,6 @@ export interface RazorpayUserConfig {
   customersCollection?: string;
   productsCollection?: string;
   syncCustomers?: boolean;
-  syncCustomClaims?: boolean;
   eventarcChannel?: string;
   allowedEventTypes?: string[];
 }
@@ -17,14 +16,24 @@ export interface RazorpaySyncConfig {
   customersCollection: string;
   productsCollection: string;
   syncCustomers: boolean;
-  syncCustomClaims: boolean;
   eventarcChannel?: string;
   allowedEventTypes?: string[];
+}
+
+export interface WebhookEntityWrapper {
+  entity?: Record<string, any>;
+  id?: string;
+}
+
+export interface WebhookPayload {
+  payment?: WebhookEntityWrapper;
+  order?: WebhookEntityWrapper;
+  subscription?: WebhookEntityWrapper;
 }
 
 export interface WebhookEvent {
   event: string;
   id: string;
-  payload: any;
+  payload: WebhookPayload;
   created_at?: number;
 }

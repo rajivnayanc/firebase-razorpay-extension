@@ -3,8 +3,10 @@ import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { Orders } from 'razorpay/dist/types/orders';
-import { logs } from '@/logs';
-import { RazorpaySyncConfig } from '@/types';
+import { logs } from '../logs';
+import { RazorpaySyncConfig } from '../types';
+import { ensureRazorpayCustomer } from '../utils/ensureCustomer';
+import { acquireProcessingLock } from '../utils/processingLock';
 
 export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     const createOrderHandler = async (event: any) => {
@@ -61,56 +63,19 @@ export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
         const orderAmount = productData.amount;
         const orderCurrency = productData.currency || 'INR';
 
-        // Set processing inside a transaction to prevent race conditions
-        let shouldProcess = false;
-        await admin.firestore().runTransaction(async (transaction) => {
-            const docSnap = await transaction.get(snap.ref as admin.firestore.DocumentReference);
-            if (!docSnap.exists) return;
-            const txData = docSnap.data();
-            if (!txData) return;
-
-            if (txData.order_id || txData.status === 'created' || txData.status === 'paid') {
-                shouldProcess = false;
-                return;
-            }
-
-            if (txData.status === 'processing') {
-                const processingAt = txData.processing_at?.toDate();
-                if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
-                    shouldProcess = false;
-                    return; // Still processing normally
-                }
-            }
-
-            transaction.update(snap.ref, {
-                status: 'processing',
-                processing_at: FieldValue.serverTimestamp(),
-            });
-            shouldProcess = true;
-        });
+        // Acquire processing lock to prevent race conditions
+        const shouldProcess = await acquireProcessingLock(
+            snap.ref as admin.firestore.DocumentReference,
+            (data) => !!(data.order_id || data.status === 'created' || data.status === 'paid')
+        );
 
         if (!shouldProcess) {
             return;
         }
 
-        // Lazy Customer Creation
+        // Lazy Customer Creation via shared utility
         try {
-            const customerDoc = await admin.firestore().collection(config.customersCollection).doc(event.params.uid).get();
-            let customerData = customerDoc.data() || {};
-            let razorpayCustomerId = customerData.razorpay_customer_id;
-
-            if (!razorpayCustomerId && config.syncCustomers) {
-                const userRec = await admin.auth().getUser(event.params.uid).catch(() => null);
-                const newCustomer = await rzp.customers.create({
-                    name: userRec?.displayName || customerData.name || 'Firebase User',
-                    email: userRec?.email || customerData.email || undefined,
-                    contact: userRec?.phoneNumber || customerData.phone || undefined,
-                    fail_existing: '0',
-                } as any);
-                razorpayCustomerId = newCustomer.id;
-                await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
-                logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${event.params.uid}`);
-            }
+            await ensureRazorpayCustomer(event.params.uid, config, rzp);
         } catch (customerError: any) {
             const errMsg = customerError instanceof Error ? customerError.message : (typeof customerError === 'object' ? JSON.stringify(customerError) : String(customerError));
             logs.error(new Error(`Failed to dynamically create Razorpay customer: ${errMsg}`));

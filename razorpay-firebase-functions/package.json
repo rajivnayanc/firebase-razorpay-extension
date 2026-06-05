@@ -4,6 +4,9 @@
   "description": "Consumable Firebase Cloud Functions for Razorpay payments and subscriptions integration using the Factory pattern",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "files": [
+    "lib/**/*"
+  ],
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",

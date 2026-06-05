@@ -1,10 +1,9 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
 import { logs } from './logs';
 import { RazorpaySyncConfig } from './types';
-import { sanitizePlan, generateProductId, generatePlanKey } from './utils';
+import { syncPlanToProduct } from './utils';
 
 export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return onCall(async (request) => {
@@ -33,33 +32,9 @@ export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
             });
 
             const db = admin.firestore();
-            const productId = generateProductId(plan);
-            const planKey = generatePlanKey(plan);
-            const docRef = db.collection(config.productsCollection).doc(productId);
+            const productData = await syncPlanToProduct(plan, db, config);
 
-            const productSnap = await docRef.get();
-            const productData = productSnap.data() || {
-                id: productId,
-                name: plan.item?.name || 'Razorpay Product',
-                description: plan.item?.description || '',
-                active: true,
-                allowedPlans: {},
-                created_at: FieldValue.serverTimestamp(),
-            };
-
-            productData.allowedPlans = productData.allowedPlans || {};
-            productData.allowedPlans[planKey] = plan.id;
-            
-            productData.plans = productData.plans || {};
-            productData.plans[planKey] = sanitizePlan(plan);
-
-            productData.type = 'subscription';
-            productData.updated_at = FieldValue.serverTimestamp();
-            productData._synced_via = 'admin_api';
-
-            await docRef.set(productData, { merge: true });
-
-            logs.info(`Admin created plan: ${plan.id} and synced to product: ${productId}`);
+            logs.info(`Admin created plan: ${plan.id} and synced to product: ${productData.id}`);
             return productData;
         } catch (err: any) {
             logs.error(err);
@@ -93,31 +68,7 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
                 }
 
                 for (const plan of plans.items) {
-                    const productId = generateProductId(plan);
-                    const planKey = generatePlanKey(plan);
-                    const docRef = db.collection(config.productsCollection).doc(productId);
-
-                    const productSnap = await docRef.get();
-                    const productData = productSnap.data() || {
-                        id: productId,
-                        name: plan.item?.name || 'Razorpay Product',
-                        description: plan.item?.description || '',
-                        active: true,
-                        allowedPlans: {},
-                        created_at: FieldValue.serverTimestamp(),
-                    };
-
-                    productData.allowedPlans = productData.allowedPlans || {};
-                    productData.allowedPlans[planKey] = plan.id;
-
-                    productData.plans = productData.plans || {};
-                    productData.plans[planKey] = sanitizePlan(plan);
-
-                    productData.type = 'subscription';
-                    productData.updated_at = FieldValue.serverTimestamp();
-                    productData._synced_via = 'admin_api';
-
-                    await docRef.set(productData, { merge: true });
+                    await syncPlanToProduct(plan, db, config);
                     syncedCount++;
                 }
 

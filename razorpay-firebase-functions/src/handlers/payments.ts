@@ -3,10 +3,10 @@ import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { Orders } from 'razorpay/dist/types/orders';
 import { Payments } from 'razorpay/dist/types/payments';
-import { logs } from '@/logs';
-import { WebhookEvent, RazorpaySyncConfig } from '@/types';
-import { fetchWithBackoff, isTransientError } from '@/utils/retry';
-import { getUidByCustomerId } from '@/utils/customerMapping';
+import { logs } from '../logs';
+import { WebhookEvent, RazorpaySyncConfig } from '../types';
+import { fetchWithBackoff, isTransientError } from '../utils/retry';
+import { getUidByCustomerId } from '../utils/customerMapping';
 
 export const handlePaymentEvent = async (
     event: WebhookEvent,
@@ -66,6 +66,7 @@ export const handlePaymentEvent = async (
     }
 
     if (!uid && notes?.uid) {
+        logs.info(`[SECURITY] Using notes.uid fallback for event ${event.event}, entity ${fetchedEntity!.id}. Customer ID mapping is preferred.`);
         uid = String(notes.uid);
     }
 
@@ -109,8 +110,7 @@ export const handlePaymentEvent = async (
                 updated_at: FieldValue.serverTimestamp(),
             };
 
-            const entityOrderId = isPayment ? (fetchedEntity as any).order_id : fetchedEntity!.id;
-            if (!existingData?.order_id || existingData.order_id === entityOrderId) {
+            if (!existingData?.order_id || existingData.order_id === expectedOrderId) {
                 dataToWrite.processing_at = FieldValue.delete();
             }
 

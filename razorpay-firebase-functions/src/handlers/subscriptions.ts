@@ -1,10 +1,10 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
-import { logs } from '@/logs';
-import { WebhookEvent, RazorpaySyncConfig } from '@/types';
-import { fetchWithBackoff, isTransientError } from '@/utils/retry';
-import { getUidByCustomerId } from '@/utils/customerMapping';
+import { logs } from '../logs';
+import { WebhookEvent, RazorpaySyncConfig } from '../types';
+import { fetchWithBackoff, isTransientError } from '../utils/retry';
+import { getUidByCustomerId } from '../utils/customerMapping';
 
 export const handleSubscriptionEvent = async (
     event: WebhookEvent,

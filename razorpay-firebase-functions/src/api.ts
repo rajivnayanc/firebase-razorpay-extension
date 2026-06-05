@@ -4,12 +4,12 @@ import Razorpay from 'razorpay';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { Channel } from 'firebase-admin/eventarc';
-import { verifyWebhookSignature } from '@/security';
-import { logs } from '@/logs';
-import { WebhookEvent, RazorpaySyncConfig } from '@/types';
-import { handleSubscriptionEvent } from '@/handlers/subscriptions';
-import { handlePaymentEvent } from '@/handlers/payments';
-import { isTransientError } from '@/utils/retry';
+import { verifyWebhookSignature } from './security';
+import { logs } from './logs';
+import { WebhookEvent, RazorpaySyncConfig } from './types';
+import { handleSubscriptionEvent } from './handlers/subscriptions';
+import { handlePaymentEvent } from './handlers/payments';
+import { isTransientError } from './utils/retry';
 
 const ALLOWED_EVENTS = new Set([
     "payment.authorized",
@@ -95,7 +95,7 @@ export const buildWebhookHandler = (
                 expireAt,
             });
         } catch (e: any) {
-            if (e.code === 6) {
+            if (e.code === 6 || e.code === 'already-exists') {
                 const canRetry = await db.runTransaction(async (tx) => {
                     const doc = await tx.get(webhookEventRef);
                     if (!doc.exists) return true;
@@ -163,10 +163,10 @@ export const buildWebhookHandler = (
                 res.status(500).send('Webhook processing failed internally - retryable');
             } else {
                 logs.error(`PERMANENT WEBHOOK FAILURE — event ${event.event} (ID: ${eventId}) will NOT be retried. Manual investigation required.`);
-                await webhookEventRef.update({ status: 'completed', completed_at: FieldValue.serverTimestamp() }).catch((err) => {
-                    logs.error(`Failed to update webhook event status to completed on permanent failure (ID: ${eventId})`, err);
+                await webhookEventRef.update({ status: 'permanently_failed', completed_at: FieldValue.serverTimestamp() }).catch((err) => {
+                    logs.error(`Failed to update webhook event status to permanently_failed (ID: ${eventId})`, err);
                 });
-                res.status(200).send('Webhook processing failed internally');
+                res.status(200).send('Webhook processing failed permanently');
             }
         }
     };
