@@ -1,12 +1,14 @@
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { Plans } from 'razorpay/dist/types/plans';
+import { Items } from 'razorpay/dist/types/items';
 import { RazorpaySyncConfig } from '../types';
 
 /**
  * Helper to sanitize Razorpay plan data for Firestore storage.
  */
-export const sanitizePlan = (plan: any) => {
-    const sanitizedPlan: any = {
+export const sanitizePlan = (plan: Plans.RazorPayPlans) => {
+    const sanitizedPlan: Record<string, unknown> = {
         id: plan.id,
         entity: plan.entity,
         interval: plan.interval,
@@ -19,16 +21,16 @@ export const sanitizePlan = (plan: any) => {
         _synced_via: 'admin_api'
     };
 
-    if (plan.item && (plan.item as any).active !== undefined) {
-        sanitizedPlan.active = (plan.item as any).active;
+    if (plan.item && (plan.item as Items.RazorpayItem).active !== undefined) {
+        sanitizedPlan.active = (plan.item as Items.RazorpayItem).active;
     }
 
     return sanitizedPlan;
 };
 
-export const generateProductId = (plan: any) => {
+export const generateProductId = (plan: Plans.RazorPayPlans) => {
     if (plan.notes && plan.notes.productId) {
-        return plan.notes.productId;
+        return String(plan.notes.productId);
     }
     if (plan.item && plan.item.name) {
         return plan.item.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-+)+/g, '');
@@ -36,7 +38,7 @@ export const generateProductId = (plan: any) => {
     return `prod_${plan.id}`;
 };
 
-export const generatePlanKey = (plan: any) => {
+export const generatePlanKey = (plan: Plans.RazorPayPlans) => {
     if (plan.interval > 1) {
         return `${plan.interval}_${plan.period}`;
     }
@@ -49,10 +51,10 @@ export const generatePlanKey = (plan: any) => {
  * Shared between buildCreatePlan and buildSyncPlans.
  */
 export const syncPlanToProduct = async (
-    plan: any,
+    plan: Plans.RazorPayPlans,
     db: admin.firestore.Firestore,
     config: RazorpaySyncConfig
-): Promise<any> => {
+): Promise<FirebaseFirestore.DocumentData> => {
     const productId = generateProductId(plan);
     const planKey = generatePlanKey(plan);
     const docRef = db.collection(config.productsCollection).doc(productId);

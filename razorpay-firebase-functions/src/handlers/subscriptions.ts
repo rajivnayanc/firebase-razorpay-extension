@@ -1,6 +1,8 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
+import { Subscriptions } from 'razorpay/dist/types/subscriptions';
+import { Payments } from 'razorpay/dist/types/payments';
 import { logs } from '../logs';
 import { WebhookEvent, RazorpaySyncConfig } from '../types';
 import { fetchWithBackoff, isTransientError } from '../utils/retry';
@@ -19,7 +21,7 @@ export const handleSubscriptionEvent = async (
         return;
     }
 
-    let subscriptionEntity;
+    let subscriptionEntity: Subscriptions.RazorpaySubscription;
     try {
         subscriptionEntity = await fetchWithBackoff(() => razorpayClient.subscriptions.fetch(webhookSubscription.id));
     } catch (err: any) {
@@ -49,7 +51,7 @@ export const handleSubscriptionEvent = async (
         .collection('subscriptions')
         .doc(subscriptionId);
 
-    let paymentEntity = null;
+    let paymentEntity: Payments.RazorpayPayment | null = null;
     const webhookPayment = event.payload.payment?.entity || (event.payload.payment?.id ? event.payload.payment : null);
     if (webhookPayment?.id) {
         try {
@@ -70,7 +72,7 @@ export const handleSubscriptionEvent = async (
                 return;
             }
 
-            const dataToWrite: any = {
+            const dataToWrite: Record<string, unknown> = {
                 subscription_id: subscriptionEntity.id,
                 plan_id: subscriptionEntity.plan_id,
                 status: newStatus,
@@ -94,11 +96,11 @@ export const handleSubscriptionEvent = async (
                 const paymentRef = docRef.collection('payments').doc(paymentEntity.id);
                 tx.set(paymentRef, {
                     payment_id: paymentEntity.id,
-                    amount: (paymentEntity as any).amount,
-                    currency: (paymentEntity as any).currency,
-                    status: (paymentEntity as any).status,
-                    method: (paymentEntity as any).method,
-                    order_id: (paymentEntity as any).order_id,
+                    amount: paymentEntity.amount,
+                    currency: paymentEntity.currency,
+                    status: paymentEntity.status,
+                    method: paymentEntity.method,
+                    order_id: paymentEntity.order_id,
                     updated_at: FieldValue.serverTimestamp(),
                 }, { merge: true });
             }

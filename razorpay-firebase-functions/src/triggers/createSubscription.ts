@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { logs } from '../logs';
 import { RazorpaySyncConfig } from '../types';
+import { Subscriptions } from 'razorpay/dist/types/subscriptions';
 import { ensureRazorpayCustomer } from '../utils/ensureCustomer';
 import { acquireProcessingLock } from '../utils/processingLock';
 
@@ -114,7 +115,7 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
         }
 
         try {
-            const options: any = {
+            const options: Subscriptions.RazorpaySubscriptionCreateRequestBody & { customer_id?: string } = {
                 plan_id: planId,
                 total_count: Math.min(Math.max(Number(productData.total_count) || 12, 1), 2000),
                 quantity: 1,

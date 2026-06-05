@@ -34,8 +34,8 @@ export async function ensureRazorpayCustomer(
         name: userRec?.displayName || customerData.name || 'Firebase User',
         email: userRec?.email || customerData.email || undefined,
         contact: userRec?.phoneNumber || customerData.phone || undefined,
-        fail_existing: '0',
-    } as any);
+        fail_existing: 0,
+    });
 
     const razorpayCustomerId = newCustomer.id;
     await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
