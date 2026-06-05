@@ -4,6 +4,8 @@
   "workspaces": [
     "razorpay-firebase-functions",
     "web-sdk",
-    "razorpay-firebase-types"
+    "razorpay-firebase-types",
+    "sample-app",
+    "sample-app/functions"
   ]
 }

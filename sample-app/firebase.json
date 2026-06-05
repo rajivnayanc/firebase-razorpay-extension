@@ -16,8 +16,8 @@
             "enabled": true
         }
     },
-    "extensions": {
-        "razorpay-payments": "../firestore-razorpay-payments"
+    "functions": {
+        "source": "functions"
     },
     "project": "demo-test"
 }

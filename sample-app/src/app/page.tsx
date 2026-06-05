@@ -12,7 +12,7 @@ import {
 } from 'firebase/auth';
 import { collection, doc, addDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useRazorpay } from 'react-razorpay';
+import { useRazorpayPayments } from '@neocleus/razorpay-firebase-web-sdk';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -29,7 +29,12 @@ export default function Home() {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const { Razorpay } = useRazorpay();
+  const { startCheckout, startSubscription } = useRazorpayPayments({
+    firestore: db,
+    auth,
+    functions,
+    keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_REhhBk92ynVgRB',
+  });
 
   // Initialize
   useEffect(() => {
@@ -97,59 +102,35 @@ export default function Home() {
 
     try {
       const isSubscription = product.type === 'subscription' || !!product.allowedPlans || !!product.planId;
-      const collectionName = isSubscription ? 'subscriptions' : 'checkout_sessions';
-      const payload: any = {
-        productId: product.id,
+      const prefill = {
+        email: user.email || '',
+        contact: ''
       };
 
-      // If multiple intervals exist, we'd normally show a selector. 
-      // For this demo, find the first available interval if not specified.
-      if (isSubscription && product.allowedPlans && !product.planId) {
-        payload.interval = Object.keys(product.allowedPlans)[0];
+      if (isSubscription) {
+        // If multiple intervals exist, we'd normally show a selector.
+        // For this demo, find the first available interval if not specified.
+        const interval = (product.allowedPlans && !product.planId)
+          ? Object.keys(product.allowedPlans)[0]
+          : undefined;
+
+        setStatus({ message: 'Opening Secure Subscription Checkout...', type: 'success' });
+        await startSubscription({
+          productId: product.id,
+          interval,
+          prefill,
+          themeColor: '#2563eb'
+        });
+        setStatus({ message: 'Subscription completed! Syncing status...', type: 'success' });
+      } else {
+        setStatus({ message: 'Opening Secure Payment Checkout...', type: 'success' });
+        await startCheckout({
+          productId: product.id,
+          prefill,
+          themeColor: '#2563eb'
+        });
+        setStatus({ message: 'Payment successful! Syncing status...', type: 'success' });
       }
-
-      const docRef = await addDoc(collection(db, 'customers', user.uid, collectionName), payload);
-
-      // Listen for the order/subscription ID from the extension
-      const unsub = onSnapshot(docRef, (snap) => {
-        const data = snap.data();
-        if (!data) return;
-
-        if (data.status === 'failed') {
-          setStatus({ message: `Error: ${data.error}`, type: 'error' });
-          unsub();
-        } else if (data.order_id || data.subscription_id) {
-          setStatus({ message: 'Opening Secure Checkout...', type: 'success' });
-          unsub();
-
-          const rzpOptions: any = {
-            key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_REhhBk92ynVgRB',
-            name: 'Premium Store',
-            description: product.name,
-            prefill: {
-              email: user.email || '',
-              contact: ''
-            },
-            theme: { color: '#2563eb' },
-            handler: async (response: any) => {
-              setStatus({ message: 'Payment successful! Syncing status...', type: 'success' });
-              // The extension will handle the verification via webhooks.
-              // We just wait for the document status to update if we want.
-            }
-          };
-
-          if (data.order_id) {
-            rzpOptions.order_id = data.order_id;
-            rzpOptions.amount = data.amount;
-            rzpOptions.currency = data.currency;
-          } else {
-            rzpOptions.subscription_id = data.subscription_id;
-          }
-
-          const rzp = new Razorpay(rzpOptions);
-          rzp.open();
-        }
-      });
 
     } catch (err: any) {
       setStatus({ message: err.message, type: 'error' });
@@ -159,7 +140,7 @@ export default function Home() {
   const runAdminAction = async (action: 'sync' | 'create') => {
     setStatus({ message: `${action === 'sync' ? 'Syncing' : 'Creating'}...`, type: 'info' });
     try {
-      const callable = httpsCallable(functions, action === 'sync' ? 'ext-razorpay-payments-syncPlans' : 'ext-razorpay-payments-createPlan');
+      const callable = httpsCallable(functions, action === 'sync' ? 'syncPlans' : 'createPlan');
       const result = await callable(action === 'create' ? {
         period: 'monthly',
         interval: 1,

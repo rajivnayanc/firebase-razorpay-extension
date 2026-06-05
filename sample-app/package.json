@@ -15,9 +15,11 @@
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "react-razorpay": "^3.0.1"
+    "react-razorpay": "^3.0.1",
+    "@neocleus/razorpay-firebase-web-sdk": "^1.0.0"
   },
   "devDependencies": {
+    "@neocleus/razorpay-firebase-types": "^1.0.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
