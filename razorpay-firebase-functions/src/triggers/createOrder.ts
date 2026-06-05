@@ -88,8 +88,9 @@ export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
         }
 
         // Lazy Customer Creation via shared utility
+        let customerId: string | null = null;
         try {
-            await ensureRazorpayCustomer(event.params.uid, config, rzp);
+            customerId = await ensureRazorpayCustomer(event.params.uid, config, rzp);
         } catch (customerError: any) {
             const errMsg = customerError instanceof Error ? customerError.message : (typeof customerError === 'object' ? JSON.stringify(customerError) : String(customerError));
             logs.error(new Error(`Failed to dynamically create Razorpay customer: ${errMsg}`));
@@ -99,25 +100,36 @@ export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
             const receipt = event.params.id.substring(0, 40);
             let order: Orders.RazorpayOrder;
 
-            // Enforce only string key-value pairs for Razorpay notes metadata
+            // Enforce only string key-value pairs for Razorpay notes metadata, filtering out reserved keys and capping to 12
+            const RESERVED_NOTE_KEYS = new Set(['uid', 'sessionId', 'productId']);
             const notesMetadata: Record<string, string> = {};
+            let keyCount = 0;
             if (currentData.metadata) {
                 for (const [key, value] of Object.entries(currentData.metadata)) {
-                    notesMetadata[key] = String(value).substring(0, 512);
+                    if (!RESERVED_NOTE_KEYS.has(key)) {
+                        if (keyCount >= 12) {
+                            break;
+                        }
+                        notesMetadata[key] = String(value).substring(0, 512);
+                        keyCount++;
+                    }
                 }
             }
 
-            const options: Orders.RazorpayOrderCreateRequestBody = {
+            const options: Orders.RazorpayOrderCreateRequestBody & { customer_id?: string } = {
                 amount: orderAmount,
                 currency: orderCurrency,
                 receipt,
                 notes: {
+                    ...notesMetadata,
                     uid: event.params.uid,
                     sessionId: event.params.id,
                     productId: currentData.productId,
-                    ...notesMetadata,
                 },
             };
+            if (customerId) {
+                options.customer_id = customerId;
+            }
 
             order = await rzp.orders.create(options);
             logs.orderCreated(order.id, snap.ref.path);

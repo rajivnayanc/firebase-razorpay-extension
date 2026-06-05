@@ -58,9 +58,10 @@ export const handlePaymentEvent = async (
     const sessionId = notes?.sessionId ? String(notes.sessionId) : undefined;
 
     let uid: string | undefined;
-    const customerId = isPayment && fetchedPayment
+    const customerId = (isPayment && fetchedPayment)
         ? fetchedPayment.customer_id
-        : undefined;
+        : (fetchedOrder ? (fetchedOrder as any).customer_id : undefined);
+
     if (customerId) {
         const mappedUid = await getUidByCustomerId(customerId, config.customersCollection);
         if (mappedUid) {
@@ -71,12 +72,13 @@ export const handlePaymentEvent = async (
         }
     }
 
-    if (!uid && notes?.uid) {
-        logs.info(`[SECURITY] Using notes.uid fallback for event ${event.event}, entity ${fetchedEntity.id}. Customer ID mapping is preferred.`);
-        uid = String(notes.uid);
+    if (!uid) {
+        logs.error(new Error(`Cannot resolve UID for event ${event.event}. No customer_id mapping and notes.uid fallback removed for security.`));
+        return;
     }
 
-    if (!uid || !sessionId) {
+    if (!sessionId) {
+        logs.error(new Error(`Missing sessionId in notes for event ${event.event}.`));
         return;
     }
 

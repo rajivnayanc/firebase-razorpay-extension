@@ -251,20 +251,6 @@ params:
     default: "true"
     required: true
 
-  - param: SYNC_CUSTOM_CLAIMS
-    label: Synchronize custom claims (roles)
-    description: >-
-      If enabled, the extension will update Firebase Auth custom claims with the
-      role associated with the product upon successful subscription.
-    type: select
-    options:
-      - label: Enabled
-        value: "true"
-      - label: Disabled
-        value: "false"
-    default: "true"
-    required: true
-
   - param: RAZORPAY_API_URL
     label: Razorpay API URL
     description: >-

@@ -27,6 +27,11 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
             throw new HttpsError('not-found', 'Subscription not found');
         }
 
+        const existingData = doc.data();
+        if (existingData?.status === 'cancelled' || existingData?.status === 'completed') {
+            throw new HttpsError('failed-precondition', 'Subscription is already cancelled or completed.');
+        }
+
         try {
             const cancelledSubscription = await rzp.subscriptions.cancel(subscriptionId);
 
@@ -72,6 +77,20 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
         const doc = await docRef.get();
         if (!doc.exists) {
             throw new HttpsError('not-found', 'Subscription not found');
+        }
+
+        // SEC-07: Validate that the planId is valid and belongs to an active product
+        const productsSnap = await typedFs.getProductsCollection()
+            .where('active', '==', true)
+            .get();
+
+        const isAllowed = productsSnap.docs.some(productDoc => {
+            const data = productDoc.data();
+            return data.allowedPlans && Object.values(data.allowedPlans).includes(planId);
+        });
+
+        if (!isAllowed) {
+            throw new HttpsError('invalid-argument', 'The specified plan is not available.');
         }
 
         try {

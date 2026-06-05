@@ -33,7 +33,7 @@ export default function Home() {
     firestore: db,
     auth,
     functions,
-    keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_REhhBk92ynVgRB',
+    keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '',
   });
 
   // Initialize
@@ -53,7 +53,7 @@ export default function Home() {
         // Check for admin/roles
         const tokenResult = await getIdTokenResult(u);
         setIsAdmin(!!tokenResult.claims.admin);
-        setUserRole((tokenResult.claims.stripeRole as string) || (tokenResult.claims.firebaseRole as string) || 'Free');
+        setUserRole((tokenResult.claims.razorpayRole as string) || (tokenResult.claims.firebaseRole as string) || 'Free');
 
         // Listen to active subscriptions
         const subsQuery = query(
@@ -348,7 +348,10 @@ export default function Home() {
               <p>This app demonstrates the <span className="text-blue-400">Product-First</span> pattern. The extension uses the trusted <code>productId</code> to resolve pricing on the backend, preventing client-side manipulation.</p>
               <button onClick={async () => {
                 const token = await auth.currentUser?.getIdToken(true);
-                await fetch('/api/set-admin-claim', { headers: { 'Authorization': `Bearer ${token}` } });
+                await fetch('/api/set-admin-claim', {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
                 window.location.reload();
               }} className="mt-4 text-blue-500 hover:underline">Self-Grant Admin for Demo</button>
             </div>

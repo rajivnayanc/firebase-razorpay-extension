@@ -6,9 +6,9 @@ admin.initializeApp();
 
 // Initialize and export Razorpay functions using environmental variables
 const rzpFuncs = initializeRazorpay({
-    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_dummy',
-    keySecret: process.env.RAZORPAY_KEY_SECRET || 'dummy_secret',
-    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || 'dummy_webhook_secret',
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
     customersCollection: process.env.CUSTOMERS_COLLECTION || 'customers',
     productsCollection: process.env.PRODUCTS_COLLECTION || 'products',
     syncCustomers: process.env.SYNC_CUSTOMERS !== 'false',

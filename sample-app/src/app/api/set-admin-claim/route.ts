@@ -26,6 +26,14 @@ if (!admin.apps.length) {
 }
 
 export async function POST(req: NextRequest) {
+  // SAMPLE-01: Restrict self-granting admin claim to local emulator / development environments only
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || 
+                     !!process.env.FIRESTORE_EMULATOR_HOST || 
+                     !process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!isEmulator) {
+    return NextResponse.json({ error: 'Forbidden in production environments' }, { status: 403 });
+  }
+
   try {
     const authHeader = req.headers.get('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -54,10 +62,11 @@ export async function POST(req: NextRequest) {
       message: 'Admin claims set. Please sign out and sign back in.' 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error setting admin claim:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: 'Failed to set admin claim', details: error.message },
+      { error: 'Failed to set admin claim', details: errorMessage },
       { status: 500 }
     );
   }

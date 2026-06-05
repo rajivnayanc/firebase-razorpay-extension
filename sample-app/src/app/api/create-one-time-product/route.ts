@@ -32,12 +32,18 @@ export async function POST(req: NextRequest) {
 
     const idToken = authHeader.split('Bearer ')[1];
     
-    // Verify the ID token to get the user ID
+    // Verify the ID token to get the user ID and claims
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     const uid = decodedToken.uid;
+    const isAdmin = decodedToken.admin === true;
 
     if (!uid) {
       return NextResponse.json({ error: 'Invalid Token' }, { status: 401 });
+    }
+
+    // SAMPLE-02: Restrict product creation to admin users only
+    if (!isAdmin) {
+      return NextResponse.json({ error: 'Forbidden: Admin access required' }, { status: 403 });
     }
 
     const db = admin.firestore();
@@ -59,10 +65,11 @@ export async function POST(req: NextRequest) {
       message: 'One-Time Premium Product created in Firestore!' 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error creating one-time product:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: 'Failed to create product', details: error.message },
+      { error: 'Failed to create product', details: errorMessage },
       { status: 500 }
     );
   }

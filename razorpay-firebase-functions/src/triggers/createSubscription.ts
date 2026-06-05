@@ -137,11 +137,19 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
         }
 
         try {
-            // Enforce only string key-value pairs for Razorpay notes metadata
+            // Enforce only string key-value pairs for Razorpay notes metadata, filtering out reserved keys and capping to 12
+            const RESERVED_NOTE_KEYS = new Set(['uid', 'subscriptionId', 'productId']);
             const notesMetadata: Record<string, string> = {};
+            let keyCount = 0;
             if (currentData.metadata) {
                 for (const [key, value] of Object.entries(currentData.metadata)) {
-                    notesMetadata[key] = String(value).substring(0, 512);
+                    if (!RESERVED_NOTE_KEYS.has(key)) {
+                        if (keyCount >= 12) {
+                            break;
+                        }
+                        notesMetadata[key] = String(value).substring(0, 512);
+                        keyCount++;
+                    }
                 }
             }
 
@@ -151,10 +159,10 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
                 quantity: 1,
                 customer_id: razorpayCustomerId,
                 notes: {
+                    ...notesMetadata,
                     uid: event.params.uid,
                     subscriptionId: event.params.id, // client-draft ID
                     productId: currentData.productId,
-                    ...notesMetadata,
                 },
             };
 

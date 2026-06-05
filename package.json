@@ -9,7 +9,8 @@
     "sample-app/functions"
   ],
   "scripts": {
-    "postinstall": "node scripts/link-node-modules.js"
+    "postinstall": "node scripts/link-node-modules.js",
+    "lint": "npm run lint --workspaces --if-present"
   },
   "devDependencies": {
     "firebase-admin": "^12.0.0",

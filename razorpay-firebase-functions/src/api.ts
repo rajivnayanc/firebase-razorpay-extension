@@ -80,8 +80,8 @@ export const buildWebhookHandler = (
             return;
         }
 
-        const eventId = (req.headers['x-razorpay-event-id'] as string) ||
-            event.id ||
+        const eventId = event.id ||
+            (req.headers['x-razorpay-event-id'] as string) ||
             `evt_${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
         const db = admin.firestore();
         const typedFs = new TypedFirestore(db, config);
@@ -174,5 +174,10 @@ export const buildWebhookHandler = (
         }
     };
 
-    return onRequest(webhookHandlerFunc);
+    return onRequest({
+        timeoutSeconds: 120,
+        memory: '512MiB',
+        maxInstances: 100,
+        minInstances: 0,
+    }, webhookHandlerFunc);
 };

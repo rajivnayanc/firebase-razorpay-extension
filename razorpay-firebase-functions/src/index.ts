@@ -20,13 +20,13 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
 
     // 2. Validate required configs
     if (!userConfig.keyId || !userConfig.keySecret) {
-        logs.error(new Error("keyId or keySecret is missing. Razorpay functions will not function correctly."));
+        throw new Error("keyId or keySecret is missing. Razorpay functions cannot be initialized.");
     } else if (!userConfig.keyId.startsWith('rzp_')) {
-        logs.error(new Error(`keyId seems malformed (expected to start with 'rzp_'). Configuration is likely invalid.`));
+        throw new Error(`keyId seems malformed (expected to start with 'rzp_'). Configuration is invalid.`);
     }
 
     if (!userConfig.webhookSecret) {
-        logs.error(new Error('webhookSecret is missing. Webhook signature verification will reject all incoming events.'));
+        throw new Error('webhookSecret is missing. Razorpay functions cannot be initialized.');
     }
 
     // 3. Apply defaults
