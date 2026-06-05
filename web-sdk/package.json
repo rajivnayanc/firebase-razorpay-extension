@@ -1,14 +1,18 @@
 {
   "name": "@neocleus/razorpay-firebase-web-sdk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Client Web SDK for Razorpay Firebase Extension",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "source": "src/index.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/rajivnayanc/firebase-razorpay-extension.git"
   },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
