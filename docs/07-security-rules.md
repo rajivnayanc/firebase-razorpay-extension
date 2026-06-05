@@ -60,18 +60,22 @@ service cloud.firestore {
         // Users can read their own checkout history
         allow read: if isOwner(uid);
 
-        // Users can create checkout sessions with strict constraints
+        // Users can create checkout sessions with strict constraints (SEC-10, SEC-11, SEC-13)
         allow create: if isOwner(uid) 
-          && request.resource.data.productId != null 
+          && request.resource.data.keys().hasOnly(['productId', 'metadata'])
           && request.resource.data.productId is string
-          // Guard: Prohibit clients from injecting values that bypass triggers
-          && !("amount" in request.resource.data) 
-          && !("currency" in request.resource.data)
-          && !("status" in request.resource.data)
-          && !("order_id" in request.resource.data);
+          && request.resource.data.productId.size() <= 256
+          && (!('metadata' in request.resource.data) || request.resource.data.metadata is map)
+          && request.resource.data.keys().size() <= 5;
 
         // Clients are strictly forbidden from modifying active checkouts
         allow update, delete: if false;
+
+        // Response documents from Razorpay (created by backend)
+        match /razorpay_responses/{docId} {
+          allow read: if isOwner(uid);
+          allow write: if false;
+        }
       }
 
       // --- Subscriptions Sub-collection ---
@@ -79,15 +83,16 @@ service cloud.firestore {
         // Users can read their own active subscription documents
         allow read: if isOwner(uid);
 
-        // Users can trigger subscriptions with strict constraints
+        // Users can trigger subscriptions with strict constraints (SEC-10, SEC-11, SEC-13)
         allow create: if isOwner(uid)
-          && request.resource.data.productId != null
+          && request.resource.data.keys().hasOnly(['productId', 'interval', 'metadata', 'draftId'])
           && request.resource.data.productId is string
-          // Guard: Prohibit clients from injecting values that bypass triggers
-          && !("plan_id" in request.resource.data)
-          && !("status" in request.resource.data)
-          && !("subscription_id" in request.resource.data)
-          && !("firebaseRole" in request.resource.data);
+          && request.resource.data.productId.size() <= 256
+          && request.resource.data.interval is string
+          && request.resource.data.interval.size() <= 64
+          && (!('metadata' in request.resource.data) || request.resource.data.metadata is map)
+          && (!('draftId' in request.resource.data) || request.resource.data.draftId is string)
+          && request.resource.data.keys().size() <= 5;
 
         // Clients are strictly forbidden from modifying active subscriptions
         // Cancellation and plan upgrades are handled via admin secure callables
@@ -98,11 +103,17 @@ service cloud.firestore {
           allow read: if isOwner(uid);
           allow write: if false; // Only updated by server webhooks
         }
+
+        // Response documents from Razorpay (created by backend)
+        match /razorpay_responses/{docId} {
+          allow read: if isOwner(uid);
+          allow write: if false;
+        }
       }
     }
 
     // ==========================================
-    // 🔒 Webhook Idempotency Collection
+    // 🔒 Webhook Idempotency Collection (SEC-12)
     // ==========================================
     match /webhook_events/{eventId} {
       // Clients have no reason to access webhook logs. Deny everything.
@@ -126,3 +137,24 @@ firebase deploy --only firestore:rules
 ```
 
 3.  Alternatively, you can copy the code and paste it directly into the **Rules** tab of the Cloud Firestore section in the **Firebase Console** and click **Publish**.
+
+---
+
+## 📊 Required Firestore Indexes
+
+To run queries securely and efficiently at production scale, you must ensure that your Firestore database is configured with the correct indexes.
+
+### 1️⃣ Single-Field Index: `customers.razorpay_customer_id`
+* **Collection Path**: `customers` (or your custom `CUSTOMERS_COLLECTION` name)
+* **Field**: `razorpay_customer_id`
+* **Query Type**: Single-Field / Equality (`==`)
+* **Usage**: Used by the backend webhooks (`payments.ts` and `subscriptions.ts`) to translate the incoming Razorpay `customer_id` back to the Firebase `uid` in O(1) time.
+
+> [!TIP]
+> By default, Cloud Firestore automatically creates single-field indexes for all fields in all collections. However, if you have customized your single-field index exemptions, **make sure you do NOT exempt the `razorpay_customer_id` field**, otherwise webhook queries will fail at runtime.
+
+### 2️⃣ Subcollection Queries (Web SDK)
+When using the Web SDK, queries are made to list active subscriptions and sessions for the authenticated user:
+* **Query**: `collection(db, 'customers', uid, 'subscriptions').where('status', 'in', ['active', 'trialing'])`
+* Since this query is confined to a single user's subcollection and filters on a single field (`status`), **no composite index is required**. Firestore's built-in automatic single-field indexes handle this query out-of-the-box.
+

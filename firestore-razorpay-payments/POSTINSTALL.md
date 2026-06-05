@@ -95,18 +95,23 @@ service cloud.firestore {
         allow read: if request.auth.uid == uid;
 
         // Users can create a checkout session, but:
-        //  - Cannot supply their own 'amount' (server-side lookup from products)
-        //  - Cannot supply 'order_id' or 'status' (set by extension)
-        //  - Must supply a 'productId'
+        //  - Only allowed fields: productId, metadata
+        //  - Fields must be type/size validated
         allow create: if request.auth.uid == uid
-          && !("amount" in request.resource.data)
-          && !("order_id" in request.resource.data)
-          && !("status" in request.resource.data)
-          && !("currency" in request.resource.data)
-          && ("productId" in request.resource.data);
+          && request.resource.data.keys().hasOnly(['productId', 'metadata'])
+          && request.resource.data.productId is string
+          && request.resource.data.productId.size() <= 256
+          && (!('metadata' in request.resource.data) || request.resource.data.metadata is map)
+          && request.resource.data.keys().size() <= 5;
 
         // Only the extension (Admin SDK) updates checkout sessions
         allow update, delete: if false;
+
+        // Response documents from Razorpay (created by backend)
+        match /razorpay_responses/{docId} {
+          allow read: if request.auth.uid == uid;
+          allow write: if false;
+        }
       }
 
       // ── Subscriptions ──
@@ -114,18 +119,17 @@ service cloud.firestore {
         allow read: if request.auth.uid == uid;
 
         // Users can create a subscription request, but:
-        //  - Cannot supply their own 'plan_id' (resolved server-side from product)
-        //  - Cannot supply 'subscription_id' or 'status'
-        //  - Cannot supply 'customer_id' (fetched from their customer doc)
-        //  - Must supply 'productId' and 'interval'
+        //  - Only allowed fields: productId, interval, metadata, draftId
+        //  - Fields must be type/size validated
         allow create: if request.auth.uid == uid
-          && !("plan_id" in request.resource.data)
-          && !("subscription_id" in request.resource.data)
-          && !("status" in request.resource.data)
-          && !("customer_id" in request.resource.data)
-          && !("total_count" in request.resource.data)
-          && ("productId" in request.resource.data)
-          && ("interval" in request.resource.data);
+          && request.resource.data.keys().hasOnly(['productId', 'interval', 'metadata', 'draftId'])
+          && request.resource.data.productId is string
+          && request.resource.data.productId.size() <= 256
+          && request.resource.data.interval is string
+          && request.resource.data.interval.size() <= 64
+          && (!('metadata' in request.resource.data) || request.resource.data.metadata is map)
+          && (!('draftId' in request.resource.data) || request.resource.data.draftId is string)
+          && request.resource.data.keys().size() <= 5;
 
         // Only the extension (Admin SDK) updates subscriptions
         allow update, delete: if false;
@@ -135,7 +139,18 @@ service cloud.firestore {
           allow read: if request.auth.uid == uid;
           allow write: if false;
         }
+
+        // Response documents from Razorpay (created by backend)
+        match /razorpay_responses/{docId} {
+          allow read: if request.auth.uid == uid;
+          allow write: if false;
+        }
       }
+    }
+
+    // ── Webhook Events (Backend/Extension Only) ──
+    match /webhook_events/{eventId} {
+      allow read, write: if false;
     }
 
     // ── Deny everything else by default ──

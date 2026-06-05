@@ -1,6 +1,7 @@
 - **Getting Started**
   - [Introduction & Architecture](01-introduction.md)
   - [Installation & Setup](02-installation.md)
+  - [NPM Package & SDK](08-npm-package-and-sdk.md)
 
 - **Core Guides**
   - [One-Time Payments](03-one-time-payments.md)
