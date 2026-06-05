@@ -1,4 +1,4 @@
-import { logs } from '../logs';
+import { logs } from '@/logs';
 
 /**
  * Retry a fetch function with exponential backoff on 429 (Rate Limited) responses.

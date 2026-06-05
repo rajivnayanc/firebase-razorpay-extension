@@ -2,8 +2,8 @@ import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions';
 import Razorpay from 'razorpay';
 import { Customers } from 'razorpay/dist/types/customers';
-import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { logs } from '@/logs';
+import { RazorpaySyncConfig } from '@/types';
 
 export const buildCreateCustomer = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return functions.auth.user().onCreate(

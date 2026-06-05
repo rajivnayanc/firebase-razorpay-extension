@@ -3,8 +3,8 @@ import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { Orders } from 'razorpay/dist/types/orders';
-import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { logs } from '@/logs';
+import { RazorpaySyncConfig } from '@/types';
 
 export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     const createOrderHandler = async (event: any) => {
@@ -119,7 +119,7 @@ export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
         try {
             const receipt = event.params.id.substring(0, 40);
             let order: Orders.RazorpayOrder;
-            
+
             const options: Orders.RazorpayOrderCreateRequestBody = {
                 amount: orderAmount,
                 currency: orderCurrency,

@@ -1,7 +1,7 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
-import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { logs } from '@/logs';
+import { RazorpaySyncConfig } from '@/types';
 
 export const buildSyncClaimsOnSubscriptionChange = (config: RazorpaySyncConfig) => {
     const syncClaimsHandler = async (event: any) => {
@@ -10,7 +10,7 @@ export const buildSyncClaimsOnSubscriptionChange = (config: RazorpaySyncConfig) 
         }
 
         const uid = event.params.uid;
-        
+
         try {
             const allSubsSnap = await admin.firestore()
                 .collection(config.customersCollection)

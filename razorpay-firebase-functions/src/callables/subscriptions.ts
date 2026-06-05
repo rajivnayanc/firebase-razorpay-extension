@@ -2,8 +2,8 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
-import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { logs } from '@/logs';
+import { RazorpaySyncConfig } from '@/types';
 
 export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return onCall(async (request) => {
@@ -30,7 +30,7 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
 
         try {
             const cancelledSubscription = await rzp.subscriptions.cancel(subscriptionId);
-            
+
             await docRef.set({
                 status: cancelledSubscription.status,
                 updated_at: FieldValue.serverTimestamp()
@@ -73,7 +73,7 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
                 plan_id: planId,
                 schedule_change_at: 'now'
             });
-            
+
             await docRef.set({
                 plan_id: updatedSubscription.plan_id,
                 status: updatedSubscription.status,

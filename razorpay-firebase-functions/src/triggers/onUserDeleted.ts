@@ -2,8 +2,8 @@ import { FieldValue } from 'firebase-admin/firestore';
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
-import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { logs } from '@/logs';
+import { RazorpaySyncConfig } from '@/types';
 
 export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return functions.firestore
@@ -29,7 +29,7 @@ export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razo
                         try {
                             await rzp.subscriptions.cancel(subscriptionId);
                             logs.info(`Cancelled Razorpay subscription ${subscriptionId} for deleted user ${uid}`);
-                            
+
                             batch.update(doc.ref, {
                                 status: 'cancelled',
                                 ended_at: FieldValue.serverTimestamp(),

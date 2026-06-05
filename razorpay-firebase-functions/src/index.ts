@@ -1,7 +1,7 @@
 import Razorpay from 'razorpay';
 import { getEventarc, Channel } from 'firebase-admin/eventarc';
-import { RazorpayUserConfig, RazorpaySyncConfig } from './types';
-import { logs } from './logs';
+import { RazorpayUserConfig, RazorpaySyncConfig } from '@/types';
+import { logs } from '@/logs';
 
 // Import builders
 import { buildCreateOrder } from './triggers/createOrder';

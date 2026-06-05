@@ -4,12 +4,12 @@ import Razorpay from 'razorpay';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { Channel } from 'firebase-admin/eventarc';
-import { verifyWebhookSignature } from './security';
-import { logs } from './logs';
-import { WebhookEvent, RazorpaySyncConfig } from './types';
-import { handleSubscriptionEvent } from './handlers/subscriptions';
-import { handlePaymentEvent } from './handlers/payments';
-import { isTransientError } from './utils/retry';
+import { verifyWebhookSignature } from '@/security';
+import { logs } from '@/logs';
+import { WebhookEvent, RazorpaySyncConfig } from '@/types';
+import { handleSubscriptionEvent } from '@/handlers/subscriptions';
+import { handlePaymentEvent } from '@/handlers/payments';
+import { isTransientError } from '@/utils/retry';
 
 const ALLOWED_EVENTS = new Set([
     "payment.authorized",
@@ -79,9 +79,9 @@ export const buildWebhookHandler = (
             return;
         }
 
-        const eventId = (req.headers['x-razorpay-event-id'] as string) || 
-                        event.id || 
-                        `evt_${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
+        const eventId = (req.headers['x-razorpay-event-id'] as string) ||
+            event.id ||
+            `evt_${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
         const db = admin.firestore();
 
         const webhookEventRef = db.collection('webhook_events').doc(eventId);
@@ -100,12 +100,12 @@ export const buildWebhookHandler = (
                     const doc = await tx.get(webhookEventRef);
                     if (!doc.exists) return true;
                     const data = doc.data();
-                    
+
                     const updatedAt = data?.updated_at;
                     const isStuck = data?.status === 'processing' &&
-                                    updatedAt &&
-                                    (typeof updatedAt.toMillis === 'function') &&
-                                    (Date.now() - updatedAt.toMillis() > 2 * 60 * 1000); // 2 mins
+                        updatedAt &&
+                        (typeof updatedAt.toMillis === 'function') &&
+                        (Date.now() - updatedAt.toMillis() > 2 * 60 * 1000); // 2 mins
 
                     if (data?.status === 'failed' || isStuck) {
                         tx.update(webhookEventRef, {

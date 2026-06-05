@@ -2,8 +2,8 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
-import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { logs } from '@/logs';
+import { RazorpaySyncConfig } from '@/types';
 
 export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     const createSubscriptionHandler = async (event: any) => {

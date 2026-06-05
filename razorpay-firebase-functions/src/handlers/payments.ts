@@ -3,10 +3,10 @@ import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { Orders } from 'razorpay/dist/types/orders';
 import { Payments } from 'razorpay/dist/types/payments';
-import { logs } from '../logs';
-import { WebhookEvent, RazorpaySyncConfig } from '../types';
-import { fetchWithBackoff, isTransientError } from '../utils/retry';
-import { getUidByCustomerId } from '../utils/customerMapping';
+import { logs } from '@/logs';
+import { WebhookEvent, RazorpaySyncConfig } from '@/types';
+import { fetchWithBackoff, isTransientError } from '@/utils/retry';
+import { getUidByCustomerId } from '@/utils/customerMapping';
 
 export const handlePaymentEvent = async (
     event: WebhookEvent,
@@ -52,7 +52,7 @@ export const handlePaymentEvent = async (
 
     const notes = fetchedEntity.notes;
     const sessionId = notes?.sessionId ? String(notes.sessionId) : undefined;
-    
+
     let uid: string | undefined;
     const customerId = (fetchedEntity as any).customer_id;
     if (customerId) {
