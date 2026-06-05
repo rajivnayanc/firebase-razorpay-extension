@@ -1,5 +1,5 @@
 {
-  "name": "razorpay-firebase-web-sdk",
+  "name": "@neocleus/razorpay-firebase-web-sdk",
   "version": "1.0.0",
   "description": "Client Web SDK for Razorpay Firebase Extension",
   "main": "dist/index.js",
@@ -17,11 +17,21 @@
   ],
   "author": "",
   "license": "MIT",
+  "dependencies": {
+    "@neocleus/razorpay-firebase-types": "^1.0.0",
+    "react-razorpay": "^3.0.1"
+  },
   "peerDependencies": {
-    "firebase": "^10.0.0 || ^11.0.0"
+    "firebase": "^10.0.0 || ^11.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "firebase": "^10.8.0"
+    "firebase": "^10.8.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
   }
 }

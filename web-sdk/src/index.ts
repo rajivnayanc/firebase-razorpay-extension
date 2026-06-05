@@ -1,3 +1,4 @@
+import { useRazorpay } from 'react-razorpay';
 import {
     Firestore,
     collection,
@@ -22,38 +23,12 @@ export interface RazorpayPaymentsConfig {
     productsCollection?: string;
 }
 
-export class RazorpayPayments {
-    private firestore: Firestore;
-    private auth: Auth;
-    private functions: Functions;
-    private keyId: string;
-    private customersCollection: string;
-    private productsCollection: string;
+export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
+    const { Razorpay, isLoading: isScriptLoading, error: scriptError } = useRazorpay();
 
-    constructor(config: RazorpayPaymentsConfig) {
-        this.firestore = config.firestore;
-        this.auth = config.auth;
-        this.functions = config.functions;
-        this.keyId = config.keyId;
-        this.customersCollection = config.customersCollection || 'customers';
-        this.productsCollection = config.productsCollection || 'products';
-    }
+    const customersCollection = config.customersCollection || 'customers';
 
-    private loadRazorpayScript(): Promise<void> {
-        return new Promise((resolve, reject) => {
-            if ((window as any).Razorpay) {
-                resolve();
-                return;
-            }
-            const script = document.createElement('script');
-            script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('Failed to load Razorpay SDK. Please check your internet connection.'));
-            document.head.appendChild(script);
-        });
-    }
-
-    async startCheckout(options: {
+    const startCheckout = async (options: {
         productId: string;
         metadata?: Record<string, string>;
         prefill?: {
@@ -62,16 +37,24 @@ export class RazorpayPayments {
             contact?: string;
         };
         themeColor?: string;
-    }): Promise<{ status: 'paid' | 'failed' }> {
-        const user = this.auth.currentUser;
+    }): Promise<{ status: 'paid' | 'failed' }> => {
+        const user = config.auth.currentUser;
         if (!user) {
             throw new Error('User is not authenticated.');
         }
 
+        if (scriptError) {
+            throw new Error(`Razorpay script failed to load: ${scriptError}`);
+        }
+
+        if (!Razorpay) {
+            throw new Error('Razorpay SDK is not loaded yet. Please try again in a moment.');
+        }
+
         // 1. Create checkout session draft
         const checkoutSessionsCol = collection(
-            this.firestore,
-            this.customersCollection,
+            config.firestore,
+            customersCollection,
             user.uid,
             'checkout_sessions'
         );
@@ -114,7 +97,7 @@ export class RazorpayPayments {
             });
 
             // Listen to the subcollection razorpay_responses/order for the order details to open the popup
-            const orderDocRef = doc(this.firestore, sessionRef.path, 'razorpay_responses', 'order');
+            const orderDocRef = doc(config.firestore, sessionRef.path, 'razorpay_responses', 'order');
             unsubOrder = onSnapshot(orderDocRef, async (snap) => {
                 if (!snap.exists()) return;
                 if (popupTriggered) return;
@@ -123,10 +106,8 @@ export class RazorpayPayments {
                 const orderData = snap.data();
 
                 try {
-                    await this.loadRazorpayScript();
-
                     const rzpOptions: RazorpayPopupOptions = {
-                        key: this.keyId,
+                        key: config.keyId,
                         order_id: orderData.id,
                         amount: orderData.amount,
                         currency: orderData.currency,
@@ -146,7 +127,7 @@ export class RazorpayPayments {
                         }
                     };
 
-                    const rzp = new (window as any).Razorpay(rzpOptions);
+                    const rzp = new Razorpay(rzpOptions as any);
                     rzp.open();
                 } catch (err) {
                     cleanup();
@@ -157,9 +138,9 @@ export class RazorpayPayments {
                 reject(err);
             });
         });
-    }
+    };
 
-    async startSubscription(options: {
+    const startSubscription = async (options: {
         productId: string;
         interval?: string;
         metadata?: Record<string, string>;
@@ -169,16 +150,24 @@ export class RazorpayPayments {
             contact?: string;
         };
         themeColor?: string;
-    }): Promise<{ status: 'active' | 'authenticated' | 'failed' }> {
-        const user = this.auth.currentUser;
+    }): Promise<{ status: 'active' | 'authenticated' | 'failed' }> => {
+        const user = config.auth.currentUser;
         if (!user) {
             throw new Error('User is not authenticated.');
         }
 
+        if (scriptError) {
+            throw new Error(`Razorpay script failed to load: ${scriptError}`);
+        }
+
+        if (!Razorpay) {
+            throw new Error('Razorpay SDK is not loaded yet. Please try again in a moment.');
+        }
+
         // 1. Create subscription draft
         const subscriptionsCol = collection(
-            this.firestore,
-            this.customersCollection,
+            config.firestore,
+            customersCollection,
             user.uid,
             'subscriptions'
         );
@@ -188,7 +177,8 @@ export class RazorpayPayments {
         await setDoc(draftRef, {
             productId: options.productId,
             interval: options.interval,
-            metadata: options.metadata || {}
+            metadata: options.metadata || {},
+            draftId
         } as SubscriptionDoc);
 
         // 2. Wait for canonical doc to be created and listen for Razorpay Subscription response
@@ -253,7 +243,7 @@ export class RazorpayPayments {
                 });
 
                 // Listen to raw subscription details doc inside the subcollection
-                const detailsDocRef = doc(this.firestore, canonicalDocRef.path, 'razorpay_responses', 'subscription');
+                const detailsDocRef = doc(config.firestore, canonicalDocRef.path, 'razorpay_responses', 'subscription');
                 unsubDetails = onSnapshot(detailsDocRef, async (detailsSnap) => {
                     if (!detailsSnap.exists()) return;
                     if (popupTriggered) return;
@@ -262,10 +252,8 @@ export class RazorpayPayments {
                     const subDetails = detailsSnap.data();
 
                     try {
-                        await this.loadRazorpayScript();
-
                         const rzpOptions: RazorpayPopupOptions = {
-                            key: this.keyId,
+                            key: config.keyId,
                             subscription_id: subDetails.id,
                             name: subDetails.notes?.name || 'Subscription',
                             description: subDetails.notes?.description || '',
@@ -282,7 +270,7 @@ export class RazorpayPayments {
                             }
                         };
 
-                        const rzp = new (window as any).Razorpay(rzpOptions);
+                        const rzp = new Razorpay(rzpOptions as any);
                         rzp.open();
                     } catch (err) {
                         cleanup();
@@ -297,31 +285,36 @@ export class RazorpayPayments {
                 reject(err);
             });
         });
-    }
+    };
 
-    async cancelSubscription(subscriptionId: string): Promise<{ status: string }> {
+    const cancelSubscription = async (subscriptionId: string): Promise<{ status: string }> => {
         const cancelFunc = httpsCallable<{ subscriptionId: string }, { status: string }>(
-            this.functions,
+            config.functions,
             'cancelSubscription'
         );
         const res = await cancelFunc({ subscriptionId });
         return res.data;
-    }
+    };
 
-    async updateSubscriptionPlan(
+    const updateSubscriptionPlan = async (
         subscriptionId: string,
         planId: string,
         scheduleChangeAt: 'now' | 'cycle_end' = 'now'
-    ): Promise<{ plan_id: string; status: string }> {
+    ): Promise<{ plan_id: string; status: string }> => {
         const updateFunc = httpsCallable<
             { subscriptionId: string; planId: string; scheduleChangeAt: 'now' | 'cycle_end' },
             { plan_id: string; status: string }
-        >(this.functions, 'updateSubscriptionPlan');
+        >(config.functions, 'updateSubscriptionPlan');
         const res = await updateFunc({ subscriptionId, planId, scheduleChangeAt });
         return res.data;
-    }
-}
+    };
 
-export function initializeRazorpayPayments(config: RazorpayPaymentsConfig): RazorpayPayments {
-    return new RazorpayPayments(config);
+    return {
+        startCheckout,
+        startSubscription,
+        cancelSubscription,
+        updateSubscriptionPlan,
+        isScriptLoading,
+        scriptError
+    };
 }

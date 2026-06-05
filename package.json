@@ -1,0 +1,9 @@
+{
+  "name": "razorpay-firebase-extension-monorepo",
+  "private": true,
+  "workspaces": [
+    "razorpay-firebase-functions",
+    "web-sdk",
+    "razorpay-firebase-types"
+  ]
+}
