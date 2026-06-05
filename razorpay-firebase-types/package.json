@@ -1,9 +1,13 @@
 {
   "name": "@neocleus/razorpay-firebase-types",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Shared TypeScript types for Razorpay Firebase Extension",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rajivnayanc/firebase-razorpay-extension.git"
+  },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build"

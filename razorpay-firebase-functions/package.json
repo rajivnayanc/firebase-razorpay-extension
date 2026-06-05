@@ -1,9 +1,13 @@
 {
   "name": "@neocleus/razorpay-firebase-functions",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Consumable Firebase Cloud Functions for Razorpay payments and subscriptions integration using the Factory pattern",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rajivnayanc/firebase-razorpay-extension.git"
+  },
   "files": [
     "lib/**/*"
   ],
@@ -28,7 +32,7 @@
   },
   "dependencies": {
     "razorpay": "^2.9.4",
-    "@neocleus/razorpay-firebase-types": "^1.0.0"
+    "@neocleus/razorpay-firebase-types": "^1.0.1"
   },
   "devDependencies": {
     "typescript": "^5.6.2",
