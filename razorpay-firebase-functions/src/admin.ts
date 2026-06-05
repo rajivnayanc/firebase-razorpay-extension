@@ -2,7 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { logs } from './logs';
-import { RazorpaySyncConfig } from './types';
+import { RazorpaySyncConfig, ProductDoc } from './types';
 import { syncPlanToProduct } from './utils';
 
 export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
@@ -32,7 +32,7 @@ export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
             });
 
             const db = admin.firestore();
-            const productData = await syncPlanToProduct(plan, db, config);
+            const productData: ProductDoc = await syncPlanToProduct(plan, db, config);
 
             logs.info(`Admin created plan: ${plan.id} and synced to product: ${productData.id}`);
             return productData;

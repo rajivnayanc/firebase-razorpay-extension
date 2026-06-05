@@ -4,9 +4,10 @@ import Razorpay from 'razorpay';
 import { Orders } from 'razorpay/dist/types/orders';
 import { Payments } from 'razorpay/dist/types/payments';
 import { logs } from '../logs';
-import { WebhookEvent, RazorpaySyncConfig } from '../types';
+import { WebhookEvent, RazorpaySyncConfig, CheckoutSessionDoc } from '../types';
 import { fetchWithBackoff, isTransientError } from '../utils/retry';
 import { getUidByCustomerId } from '../utils/customerMapping';
+import { TypedFirestore } from '../utils/typedFirestore';
 
 export const handlePaymentEvent = async (
     event: WebhookEvent,
@@ -41,9 +42,9 @@ export const handlePaymentEvent = async (
     } catch (err: any) {
         logs.error(new Error(`Failed to fetch entity from Razorpay API. Event: ${event.event}. Error: ${err.message}`));
         if (isTransientError(err)) {
-            throw err; // Rethrow to signal to retry
+            throw err;
         }
-        return; // Don't throw for permanent errors (like 404), skip processing
+        return;
     }
 
     const fetchedEntity = fetchedPayment || fetchedOrder;
@@ -57,8 +58,8 @@ export const handlePaymentEvent = async (
     const sessionId = notes?.sessionId ? String(notes.sessionId) : undefined;
 
     let uid: string | undefined;
-    const customerId = isPayment
-        ? (fetchedPayment as Payments.RazorpayPayment).customer_id
+    const customerId = isPayment && fetchedPayment
+        ? fetchedPayment.customer_id
         : undefined;
     if (customerId) {
         const mappedUid = await getUidByCustomerId(customerId, config.customersCollection);
@@ -79,7 +80,7 @@ export const handlePaymentEvent = async (
         return;
     }
 
-    let newStatus = 'processing';
+    let newStatus: 'processing' | 'paid' | 'failed' = 'processing';
     if (isPayment && fetchedPayment) {
         if (fetchedPayment.status === 'captured') newStatus = 'paid';
         else if (fetchedPayment.status === 'failed') newStatus = 'failed';
@@ -89,10 +90,9 @@ export const handlePaymentEvent = async (
         else newStatus = 'processing';
     }
 
-    const docRef = db.collection(config.customersCollection)
-        .doc(uid)
-        .collection('checkout_sessions')
-        .doc(sessionId);
+    const typedFs = new TypedFirestore(db, config);
+    const docRef = typedFs.getCheckoutSessionDoc(uid, sessionId);
+    const orderDocRef = typedFs.getCheckoutSessionOrderDoc(uid, sessionId);
 
     try {
         await db.runTransaction(async (tx) => {
@@ -103,41 +103,40 @@ export const handlePaymentEvent = async (
                 return;
             }
 
-            const existingData = snap.data();
-            const expectedOrderId = isPayment && fetchedPayment ? fetchedPayment.order_id : fetchedOrder!.id;
-            if (!existingData?.order_id || existingData.order_id !== expectedOrderId) {
-                logs.error(new Error(`Order ID missing or mismatch for session ${sessionId}. Expected: ${existingData?.order_id}, Got: ${expectedOrderId}. Possible notes injection.`));
+            // Secure validation: Fetch the server-written order document inside the transaction to verify order ID
+            const orderSnap = await tx.get(orderDocRef);
+            if (!orderSnap.exists) {
+                logs.error(new Error(`Order details missing for session ${sessionId}. Possible notes injection.`));
                 return;
             }
 
-            const dataToWrite: Record<string, unknown> = {
+            const orderData = orderSnap.data();
+            const expectedOrderId = isPayment && fetchedPayment ? fetchedPayment.order_id : fetchedOrder!.id;
+            if (!orderData || orderData.id !== expectedOrderId) {
+                logs.error(new Error(`Order ID mismatch for session ${sessionId}. Expected: ${orderData?.id}, Got: ${expectedOrderId}. Possible notes injection.`));
+                return;
+            }
+
+            const dataToWrite: Partial<CheckoutSessionDoc> = {
                 status: newStatus,
                 updated_at: FieldValue.serverTimestamp(),
             };
 
-            if (!existingData?.order_id || existingData.order_id === expectedOrderId) {
-                dataToWrite.processing_at = FieldValue.delete();
+            const existingData = snap.data();
+            if (existingData?.processing_at) {
+                dataToWrite.processing_at = FieldValue.delete() as any;
             }
 
+            // Update status and timestamp on the main document
+            tx.set(docRef, dataToWrite as CheckoutSessionDoc, { merge: true });
+
+            // Store raw Razorpay responses in separate subcollection documents
             if (isPayment && fetchedPayment) {
-                dataToWrite.razorpay_payment_id = fetchedPayment.id;
-                dataToWrite.amount = fetchedPayment.amount;
-                dataToWrite.currency = fetchedPayment.currency;
-                dataToWrite.method = fetchedPayment.method;
-                dataToWrite.order_id = fetchedPayment.order_id;
-                dataToWrite.description = fetchedPayment.description;
+                const paymentDocRef = typedFs.getCheckoutSessionPaymentDoc(uid, sessionId);
+                tx.set(paymentDocRef, fetchedPayment);
             } else if (fetchedOrder) {
-                dataToWrite.order_id = fetchedOrder.id;
-                dataToWrite.amount = fetchedOrder.amount;
-                dataToWrite.amount_paid = fetchedOrder.amount_paid;
-                dataToWrite.amount_due = fetchedOrder.amount_due;
-                dataToWrite.currency = fetchedOrder.currency;
-                if (webhookPaymentId) {
-                    dataToWrite.razorpay_payment_id = webhookPaymentId;
-                }
+                tx.set(orderDocRef, fetchedOrder);
             }
-
-            tx.set(docRef, dataToWrite, { merge: true });
         });
 
         logs.webhookProcessed(event.event, fetchedEntity.id);

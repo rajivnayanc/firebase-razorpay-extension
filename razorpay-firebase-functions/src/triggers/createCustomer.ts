@@ -3,7 +3,8 @@ import * as functions from 'firebase-functions';
 import Razorpay from 'razorpay';
 import { Customers } from 'razorpay/dist/types/customers';
 import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { RazorpaySyncConfig, CustomerDoc } from '../types';
+import { TypedFirestore } from '../utils/typedFirestore';
 
 export const buildCreateCustomer = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return functions.auth.user().onCreate(
@@ -28,13 +29,17 @@ export const buildCreateCustomer = (config: RazorpaySyncConfig, rzp: Razorpay) =
                 const customer = await rzp.customers.create(customerParams);
                 logs.info(`Created Razorpay customer ${customer.id} for user ${user.uid}`);
 
-                await admin.firestore()
-                    .collection(config.customersCollection)
-                    .doc(user.uid)
-                    .set({
-                        razorpay_customer_id: customer.id,
-                        email: user.email || null,
-                    }, { merge: true });
+                const typedFs = new TypedFirestore(admin.firestore(), config);
+                const customerData: CustomerDoc = {
+                    razorpay_customer_id: customer.id,
+                    email: user.email || null,
+                    name: user.displayName || null,
+                    phone: user.phoneNumber || null,
+                    created_at: admin.firestore.FieldValue.serverTimestamp(),
+                    updated_at: admin.firestore.FieldValue.serverTimestamp(),
+                };
+
+                await typedFs.getCustomerDoc(user.uid).set(customerData, { merge: true });
 
             } catch (error: any) {
                 logs.error(new Error(`Failed to create Razorpay customer for user ${user.uid}: ${error.message}`));

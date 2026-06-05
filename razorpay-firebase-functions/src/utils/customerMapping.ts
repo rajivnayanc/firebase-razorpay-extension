@@ -1,4 +1,5 @@
 import * as admin from 'firebase-admin';
+import { TypedFirestore } from './typedFirestore';
 
 /**
  * Look up a Firebase UID using the strictly mapped Razorpay Customer ID.
@@ -11,7 +12,16 @@ export async function getUidByCustomerId(
     if (!customerId) return null;
     
     const db = admin.firestore();
-    const snap = await db.collection(customersCollectionPath)
+    const typedFs = new TypedFirestore(db, {
+        customersCollection: customersCollectionPath,
+        productsCollection: '',
+        keyId: '',
+        keySecret: '',
+        webhookSecret: '',
+        syncCustomers: true
+    });
+
+    const snap = await typedFs.getCustomersCollection()
         .where('razorpay_customer_id', '==', customerId)
         .limit(1)
         .get();

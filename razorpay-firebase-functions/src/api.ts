@@ -10,6 +10,7 @@ import { WebhookEvent, RazorpaySyncConfig } from './types';
 import { handleSubscriptionEvent } from './handlers/subscriptions';
 import { handlePaymentEvent } from './handlers/payments';
 import { isTransientError } from './utils/retry';
+import { TypedFirestore } from './utils/typedFirestore';
 
 const ALLOWED_EVENTS = new Set([
     "payment.authorized",
@@ -83,8 +84,9 @@ export const buildWebhookHandler = (
             event.id ||
             `evt_${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
         const db = admin.firestore();
+        const typedFs = new TypedFirestore(db, config);
 
-        const webhookEventRef = db.collection('webhook_events').doc(eventId);
+        const webhookEventRef = typedFs.getWebhookEventDoc(eventId);
         try {
             const expireAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
             await webhookEventRef.create({
@@ -102,10 +104,11 @@ export const buildWebhookHandler = (
                     const data = doc.data();
 
                     const updatedAt = data?.updated_at;
+                    const isTimestamp = updatedAt instanceof admin.firestore.Timestamp;
                     const isStuck = data?.status === 'processing' &&
                         updatedAt &&
-                        (typeof updatedAt.toMillis === 'function') &&
-                        (Date.now() - updatedAt.toMillis() > 2 * 60 * 1000); // 2 mins
+                        isTimestamp &&
+                        (Date.now() - (updatedAt as admin.firestore.Timestamp).toMillis() > 2 * 60 * 1000); // 2 mins
 
                     if (data?.status === 'failed' || isStuck) {
                         tx.update(webhookEventRef, {

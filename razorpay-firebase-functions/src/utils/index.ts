@@ -2,18 +2,19 @@ import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { Plans } from 'razorpay/dist/types/plans';
 import { Items } from 'razorpay/dist/types/items';
-import { RazorpaySyncConfig } from '../types';
+import { RazorpaySyncConfig, SanitizedPlan, ProductDoc } from '../types';
+import { TypedFirestore } from './typedFirestore';
 
 /**
  * Helper to sanitize Razorpay plan data for Firestore storage.
  */
-export const sanitizePlan = (plan: Plans.RazorPayPlans) => {
-    const sanitizedPlan: Record<string, unknown> = {
+export const sanitizePlan = (plan: Plans.RazorPayPlans): SanitizedPlan => {
+    const sanitizedPlan: SanitizedPlan = {
         id: plan.id,
         entity: plan.entity,
         interval: plan.interval,
         period: plan.period,
-        item: plan.item,
+        item: plan.item ? (plan.item as Items.RazorpayItem) : null,
         notes: plan.notes || {},
         active: true, // Plans don't return an active boolean at the top level
         created_at: plan.created_at,
@@ -22,13 +23,13 @@ export const sanitizePlan = (plan: Plans.RazorPayPlans) => {
     };
 
     if (plan.item && (plan.item as Items.RazorpayItem).active !== undefined) {
-        sanitizedPlan.active = (plan.item as Items.RazorpayItem).active;
+        sanitizedPlan.active = !!(plan.item as Items.RazorpayItem).active;
     }
 
     return sanitizedPlan;
 };
 
-export const generateProductId = (plan: Plans.RazorPayPlans) => {
+export const generateProductId = (plan: Plans.RazorPayPlans): string => {
     if (plan.notes && plan.notes.productId) {
         return String(plan.notes.productId);
     }
@@ -38,7 +39,7 @@ export const generateProductId = (plan: Plans.RazorPayPlans) => {
     return `prod_${plan.id}`;
 };
 
-export const generatePlanKey = (plan: Plans.RazorPayPlans) => {
+export const generatePlanKey = (plan: Plans.RazorPayPlans): string => {
     if (plan.interval > 1) {
         return `${plan.interval}_${plan.period}`;
     }
@@ -54,13 +55,14 @@ export const syncPlanToProduct = async (
     plan: Plans.RazorPayPlans,
     db: admin.firestore.Firestore,
     config: RazorpaySyncConfig
-): Promise<FirebaseFirestore.DocumentData> => {
+): Promise<ProductDoc> => {
     const productId = generateProductId(plan);
     const planKey = generatePlanKey(plan);
-    const docRef = db.collection(config.productsCollection).doc(productId);
+    const typedFs = new TypedFirestore(db, config);
+    const docRef = typedFs.getProductDoc(productId);
 
     const productSnap = await docRef.get();
-    const productData = productSnap.data() || {
+    const productData: ProductDoc = productSnap.data() || {
         id: productId,
         name: plan.item?.name || 'Razorpay Product',
         description: plan.item?.description || '',

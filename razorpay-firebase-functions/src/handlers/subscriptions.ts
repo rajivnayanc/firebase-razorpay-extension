@@ -4,9 +4,10 @@ import Razorpay from 'razorpay';
 import { Subscriptions } from 'razorpay/dist/types/subscriptions';
 import { Payments } from 'razorpay/dist/types/payments';
 import { logs } from '../logs';
-import { WebhookEvent, RazorpaySyncConfig } from '../types';
+import { WebhookEvent, RazorpaySyncConfig, SubscriptionDoc } from '../types';
 import { fetchWithBackoff, isTransientError } from '../utils/retry';
 import { getUidByCustomerId } from '../utils/customerMapping';
+import { TypedFirestore } from '../utils/typedFirestore';
 
 export const handleSubscriptionEvent = async (
     event: WebhookEvent,
@@ -46,10 +47,9 @@ export const handleSubscriptionEvent = async (
 
     const newStatus = String(subscriptionEntity.status);
     const subscriptionId = subscriptionEntity.id;
-    const docRef = db.collection(config.customersCollection)
-        .doc(uid)
-        .collection('subscriptions')
-        .doc(subscriptionId);
+
+    const typedFs = new TypedFirestore(db, config);
+    const docRef = typedFs.getSubscriptionDoc(uid, subscriptionId);
 
     let paymentEntity: Payments.RazorpayPayment | null = null;
     const webhookPayment = event.payload.payment?.entity || (event.payload.payment?.id ? event.payload.payment : null);
@@ -72,37 +72,28 @@ export const handleSubscriptionEvent = async (
                 return;
             }
 
-            const dataToWrite: Record<string, unknown> = {
-                subscription_id: subscriptionEntity.id,
-                plan_id: subscriptionEntity.plan_id,
+            const existingData = existingDoc.data();
+
+            const dataToWrite: Partial<SubscriptionDoc> = {
                 status: newStatus,
-                current_start: subscriptionEntity.current_start,
-                current_end: subscriptionEntity.current_end,
-                total_count: subscriptionEntity.total_count,
-                paid_count: subscriptionEntity.paid_count,
-                remaining_count: subscriptionEntity.remaining_count,
-                charge_at: subscriptionEntity.charge_at,
-                short_url: subscriptionEntity.short_url,
                 updated_at: FieldValue.serverTimestamp(),
             };
 
-            if (existingDoc.data()?.subscription_id === subscriptionEntity.id) {
-                dataToWrite.processing_at = FieldValue.delete();
+            if (existingData?.processing_at) {
+                dataToWrite.processing_at = FieldValue.delete() as any;
             }
 
-            tx.set(docRef, dataToWrite, { merge: true });
+            // Update status and timestamp on the main document
+            tx.set(docRef, dataToWrite as SubscriptionDoc, { merge: true });
 
+            // Store the raw subscription object in the canonical subcollection
+            const detailsDocRef = typedFs.getSubscriptionDetailsDoc(uid, subscriptionId);
+            tx.set(detailsDocRef, subscriptionEntity);
+
+            // Store the raw payment entity directly in the payments subcollection
             if (paymentEntity) {
-                const paymentRef = docRef.collection('payments').doc(paymentEntity.id);
-                tx.set(paymentRef, {
-                    payment_id: paymentEntity.id,
-                    amount: paymentEntity.amount,
-                    currency: paymentEntity.currency,
-                    status: paymentEntity.status,
-                    method: paymentEntity.method,
-                    order_id: paymentEntity.order_id,
-                    updated_at: FieldValue.serverTimestamp(),
-                }, { merge: true });
+                const paymentRef = typedFs.getSubscriptionPaymentDoc(uid, subscriptionId, paymentEntity.id);
+                tx.set(paymentRef, paymentEntity);
             }
         });
 

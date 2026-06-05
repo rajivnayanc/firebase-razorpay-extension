@@ -1,7 +1,8 @@
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { RazorpaySyncConfig, CustomerDoc } from '../types';
+import { TypedFirestore } from './typedFirestore';
 
 /**
  * Ensures a Razorpay customer exists for the given Firebase UID.
@@ -16,8 +17,10 @@ export async function ensureRazorpayCustomer(
     rzp: Razorpay
 ): Promise<string | null> {
     const db = admin.firestore();
-    const customerDoc = await db.collection(config.customersCollection).doc(uid).get();
-    const customerData = customerDoc.data() || {};
+    const typedFs = new TypedFirestore(db, config);
+    const customerDocRef = typedFs.getCustomerDoc(uid);
+    const customerDoc = await customerDocRef.get();
+    const customerData = customerDoc.data() || ({} as Partial<CustomerDoc>);
     const existingCustomerId = customerData.razorpay_customer_id;
 
     if (existingCustomerId) {
@@ -38,7 +41,11 @@ export async function ensureRazorpayCustomer(
     });
 
     const razorpayCustomerId = newCustomer.id;
-    await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
+    const updateData: Partial<CustomerDoc> = {
+        razorpay_customer_id: razorpayCustomerId,
+        updated_at: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await customerDocRef.set(updateData as CustomerDoc, { merge: true });
     logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${uid}`);
 
     return razorpayCustomerId;

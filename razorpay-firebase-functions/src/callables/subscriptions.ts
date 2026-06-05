@@ -3,7 +3,8 @@ import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
 import { logs } from '../logs';
-import { RazorpaySyncConfig } from '../types';
+import { RazorpaySyncConfig, SubscriptionDoc } from '../types';
+import { TypedFirestore } from '../utils/typedFirestore';
 
 export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return onCall(async (request) => {
@@ -18,10 +19,8 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
         }
 
         const db = admin.firestore();
-        const docRef = db.collection(config.customersCollection)
-            .doc(uid)
-            .collection('subscriptions')
-            .doc(subscriptionId);
+        const typedFs = new TypedFirestore(db, config);
+        const docRef = typedFs.getSubscriptionDoc(uid, subscriptionId);
 
         const doc = await docRef.get();
         if (!doc.exists) {
@@ -31,10 +30,16 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
         try {
             const cancelledSubscription = await rzp.subscriptions.cancel(subscriptionId);
 
-            await docRef.set({
+            // Update main document status & timestamps only
+            const updateData: Partial<SubscriptionDoc> = {
                 status: cancelledSubscription.status,
                 updated_at: FieldValue.serverTimestamp()
-            }, { merge: true });
+            };
+            await docRef.set(updateData as SubscriptionDoc, { merge: true });
+
+            // Save raw subscription response separately
+            const detailsDocRef = typedFs.getSubscriptionDetailsDoc(uid, subscriptionId);
+            await detailsDocRef.set(cancelledSubscription);
 
             logs.info(`Successfully cancelled subscription ${subscriptionId} for user ${uid}`);
             return { status: cancelledSubscription.status };
@@ -61,10 +66,8 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
         const validSchedule = scheduleChangeAt === 'cycle_end' ? 'cycle_end' : 'now';
 
         const db = admin.firestore();
-        const docRef = db.collection(config.customersCollection)
-            .doc(uid)
-            .collection('subscriptions')
-            .doc(subscriptionId);
+        const typedFs = new TypedFirestore(db, config);
+        const docRef = typedFs.getSubscriptionDoc(uid, subscriptionId);
 
         const doc = await docRef.get();
         if (!doc.exists) {
@@ -77,11 +80,16 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
                 schedule_change_at: validSchedule
             });
 
-            await docRef.set({
-                plan_id: updatedSubscription.plan_id,
+            // Update main document status & timestamps only
+            const updateData: Partial<SubscriptionDoc> = {
                 status: updatedSubscription.status,
                 updated_at: FieldValue.serverTimestamp()
-            }, { merge: true });
+            };
+            await docRef.set(updateData as SubscriptionDoc, { merge: true });
+
+            // Save raw subscription response separately
+            const detailsDocRef = typedFs.getSubscriptionDetailsDoc(uid, subscriptionId);
+            await detailsDocRef.set(updatedSubscription);
 
             logs.info(`Successfully updated subscription ${subscriptionId} for user ${uid} to plan ${planId}`);
             return { plan_id: updatedSubscription.plan_id, status: updatedSubscription.status };

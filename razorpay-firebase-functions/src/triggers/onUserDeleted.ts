@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { logs } from '../logs';
 import { RazorpaySyncConfig } from '../types';
+import { TypedFirestore } from '../utils/typedFirestore';
 
 export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razorpay) => {
     return functions.firestore
@@ -11,19 +12,17 @@ export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razo
         .onDelete(async (snapshot, context) => {
             const uid = context.params.uid;
             const db = admin.firestore();
+            const typedFs = new TypedFirestore(db, config);
             logs.info(`Customer document deleted for user ${uid}. Cleaning up...`);
 
             try {
-                const subscriptionsSnap = await db
-                    .collection(config.customersCollection)
-                    .doc(uid)
-                    .collection('subscriptions')
+                const subscriptionsSnap = await typedFs.getSubscriptionsCollection(uid)
                     .where('status', 'in', ['active', 'created', 'authenticated'])
                     .get();
 
                 const batch = db.batch();
                 for (const doc of subscriptionsSnap.docs) {
-                    const subscriptionId = doc.data().subscription_id;
+                    const subscriptionId = doc.id;
 
                     if (subscriptionId) {
                         try {
@@ -32,7 +31,7 @@ export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razo
 
                             batch.update(doc.ref, {
                                 status: 'cancelled',
-                                ended_at: FieldValue.serverTimestamp(),
+                                updated_at: FieldValue.serverTimestamp(),
                             });
                         } catch (rpError: any) {
                             logs.error(`Failed to cancel Razorpay subscription ${subscriptionId}: ${rpError.message || rpError}`);
@@ -40,7 +39,7 @@ export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razo
                     } else {
                         batch.update(doc.ref, {
                             status: 'cancelled',
-                            ended_at: FieldValue.serverTimestamp(),
+                            updated_at: FieldValue.serverTimestamp(),
                         });
                     }
                 }
@@ -66,9 +65,10 @@ export const buildOnUserDeleted = (config: RazorpaySyncConfig) => {
 
         try {
             const db = admin.firestore();
+            const typedFs = new TypedFirestore(db, config);
             logs.info(`User ${user.uid} deleted from Auth. Initiating Razorpay cleanup.`);
 
-            const customerDoc = await db.collection(config.customersCollection).doc(user.uid).get();
+            const customerDoc = await typedFs.getCustomerDoc(user.uid).get();
             if (!customerDoc.exists) {
                 logs.info(`No customer document found for ${user.uid}. Nothing to clean up.`);
                 return;
@@ -80,7 +80,7 @@ export const buildOnUserDeleted = (config: RazorpaySyncConfig) => {
                 return;
             }
 
-            await db.collection(config.customersCollection).doc(user.uid).delete();
+            await typedFs.getCustomerDoc(user.uid).delete();
             logs.info(`Deleted Firestore customer document for ${user.uid} (this will cascade subscription cancellation).`);
 
         } catch (error: any) {
