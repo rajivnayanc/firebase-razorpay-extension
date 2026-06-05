@@ -12,7 +12,7 @@ import {
     CheckoutSessionDoc,
     SubscriptionDoc,
     RazorpayPopupOptions
-} from './types';
+} from './types.js';
 
 export interface RazorpayPaymentsConfig {
     firestore: Firestore;
@@ -318,3 +318,5 @@ export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
         scriptError
     };
 }
+
+export * from './types.js';
