@@ -1,0 +1,161 @@
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
+import * as admin from 'firebase-admin';
+import Razorpay from 'razorpay';
+import { Orders } from 'razorpay/dist/types/orders';
+import { logs } from '../logs';
+import { RazorpaySyncConfig } from '../types';
+
+export const buildCreateOrder = (config: RazorpaySyncConfig, rzp: Razorpay) => {
+    const createOrderHandler = async (event: any) => {
+        logs.info('createOrderHandler');
+        const snap = event.data;
+        if (!snap) {
+            logs.error(new Error('No data associated with the event'));
+            return;
+        }
+
+        const currentData = snap.data();
+
+        // Guard: This is a subscription session, not a one-time order
+        if (currentData.mode === 'subscription' || currentData.price || currentData.subscription_id) {
+            return;
+        }
+
+        // Server-side amount validation
+        if (currentData.amount) {
+            await snap.ref.update({
+                status: 'failed',
+                error: 'Providing amount directly is not allowed. Provide a productId instead.',
+            });
+            return;
+        }
+
+        if (!currentData.productId || typeof currentData.productId !== 'string' || currentData.productId.length > 256) {
+            await snap.ref.update({
+                status: 'failed',
+                error: 'Missing or invalid productId. A valid productId string must be provided.',
+            });
+            return;
+        }
+
+        const productSnap = await admin.firestore().collection(config.productsCollection).doc(currentData.productId).get();
+        if (!productSnap.exists) {
+            logs.error(new Error(`Product ${currentData.productId} not found.`));
+            await snap.ref.update({
+                status: 'failed',
+                error: 'The selected product is not available.',
+            });
+            return;
+        }
+
+        const productData = productSnap.data();
+        if (!productData || !productData.amount || productData.amount <= 0) {
+            logs.error(new Error(`Product ${currentData.productId} has invalid amount: ${productData?.amount}`));
+            await snap.ref.update({
+                status: 'failed',
+                error: 'The selected product has an invalid configuration.',
+            });
+            return;
+        }
+        const orderAmount = productData.amount;
+        const orderCurrency = productData.currency || 'INR';
+
+        // Set processing inside a transaction to prevent race conditions
+        let shouldProcess = false;
+        await admin.firestore().runTransaction(async (transaction) => {
+            const docSnap = await transaction.get(snap.ref as admin.firestore.DocumentReference);
+            if (!docSnap.exists) return;
+            const txData = docSnap.data();
+            if (!txData) return;
+
+            if (txData.order_id || txData.status === 'created' || txData.status === 'paid') {
+                shouldProcess = false;
+                return;
+            }
+
+            if (txData.status === 'processing') {
+                const processingAt = txData.processing_at?.toDate();
+                if (processingAt && (Date.now() - processingAt.getTime()) < 120000) {
+                    shouldProcess = false;
+                    return; // Still processing normally
+                }
+            }
+
+            transaction.update(snap.ref, {
+                status: 'processing',
+                processing_at: FieldValue.serverTimestamp(),
+            });
+            shouldProcess = true;
+        });
+
+        if (!shouldProcess) {
+            return;
+        }
+
+        // Lazy Customer Creation
+        try {
+            const customerDoc = await admin.firestore().collection(config.customersCollection).doc(event.params.uid).get();
+            let customerData = customerDoc.data() || {};
+            let razorpayCustomerId = customerData.razorpay_customer_id;
+
+            if (!razorpayCustomerId && config.syncCustomers) {
+                const userRec = await admin.auth().getUser(event.params.uid).catch(() => null);
+                const newCustomer = await rzp.customers.create({
+                    name: userRec?.displayName || customerData.name || 'Firebase User',
+                    email: userRec?.email || customerData.email || undefined,
+                    contact: userRec?.phoneNumber || customerData.phone || undefined,
+                    fail_existing: '0',
+                } as any);
+                razorpayCustomerId = newCustomer.id;
+                await customerDoc.ref.set({ razorpay_customer_id: razorpayCustomerId }, { merge: true });
+                logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${event.params.uid}`);
+            }
+        } catch (customerError: any) {
+            const errMsg = customerError instanceof Error ? customerError.message : (typeof customerError === 'object' ? JSON.stringify(customerError) : String(customerError));
+            logs.error(new Error(`Failed to dynamically create Razorpay customer: ${errMsg}`));
+        }
+
+        try {
+            const receipt = event.params.id.substring(0, 40);
+            let order: Orders.RazorpayOrder;
+            
+            const options: Orders.RazorpayOrderCreateRequestBody = {
+                amount: orderAmount,
+                currency: orderCurrency,
+                receipt,
+                notes: {
+                    uid: event.params.uid,
+                    sessionId: event.params.id,
+                    productId: currentData.productId,
+                },
+            };
+
+            order = await rzp.orders.create(options);
+            logs.orderCreated(order.id, snap.ref.path);
+
+            await snap.ref.update({
+                order_id: order.id,
+                amount: order.amount,
+                amount_paid: order.amount_paid,
+                amount_due: order.amount_due,
+                currency: order.currency,
+                receipt: order.receipt,
+                status: 'created',
+                created_at: FieldValue.serverTimestamp(),
+            });
+
+        } catch (error: any) {
+            logs.error(error);
+            await snap.ref.update({
+                status: 'failed',
+                error: 'Failed to create Razorpay Order due to an internal error or validation issue',
+            });
+        }
+    };
+
+    return onDocumentCreated(
+        `${config.customersCollection}/{uid}/checkout_sessions/{id}`,
+        createOrderHandler
+    );
+};
