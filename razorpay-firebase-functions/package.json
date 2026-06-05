@@ -4,6 +4,10 @@
   "description": "Consumable Firebase Cloud Functions for Razorpay payments and subscriptions integration using the Factory pattern",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rajivnayanc/firebase-razorpay-extension.git"
+  },
   "files": [
     "lib/**/*"
   ],
