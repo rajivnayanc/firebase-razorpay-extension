@@ -1,4 +1,5 @@
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
 import { logs } from '../logs';
 import { RazorpaySyncConfig, CustomerDoc } from '../types';
@@ -43,7 +44,7 @@ export async function ensureRazorpayCustomer(
     const razorpayCustomerId = newCustomer.id;
     const updateData: Partial<CustomerDoc> = {
         razorpay_customer_id: razorpayCustomerId,
-        updated_at: admin.firestore.FieldValue.serverTimestamp()
+        updated_at: FieldValue.serverTimestamp()
     };
     await customerDocRef.set(updateData as CustomerDoc, { merge: true });
     logs.info(`Created Razorpay customer ${razorpayCustomerId} for UID ${uid}`);

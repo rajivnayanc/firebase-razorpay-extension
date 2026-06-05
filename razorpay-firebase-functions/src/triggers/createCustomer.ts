@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions';
+import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
 import { Customers } from 'razorpay/dist/types/customers';
 import { logs } from '../logs';
@@ -18,9 +19,10 @@ export const buildCreateCustomer = (config: RazorpaySyncConfig, rzp: Razorpay) =
                 logs.info(`Creating Razorpay customer for new user: ${user.uid}`);
 
                 const customerParams: Customers.RazorpayCustomerCreateRequestBody = {
-                    email: user.email,
-                    contact: user.phoneNumber,
-                    name: user.displayName,
+                    email: user.email || undefined,
+                    contact: user.phoneNumber || undefined,
+                    name: user.displayName || undefined,
+                    fail_existing: false,
                     notes: {
                         firebaseUID: user.uid,
                     },
@@ -35,14 +37,15 @@ export const buildCreateCustomer = (config: RazorpaySyncConfig, rzp: Razorpay) =
                     email: user.email || null,
                     name: user.displayName || null,
                     phone: user.phoneNumber || null,
-                    created_at: admin.firestore.FieldValue.serverTimestamp(),
-                    updated_at: admin.firestore.FieldValue.serverTimestamp(),
+                    created_at: FieldValue.serverTimestamp(),
+                    updated_at: FieldValue.serverTimestamp(),
                 };
 
                 await typedFs.getCustomerDoc(user.uid).set(customerData, { merge: true });
 
             } catch (error: any) {
-                logs.error(new Error(`Failed to create Razorpay customer for user ${user.uid}: ${error.message}`));
+                const errMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
+                logs.error(new Error(`Failed to create Razorpay customer for user ${user.uid}: ${errMsg}`));
             }
         }
     );
