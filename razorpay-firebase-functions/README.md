@@ -35,7 +35,18 @@ const rzpFuncs = initializeRazorpay({
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
     customersCollection: 'customers', // Optional, defaults to 'customers'
     productsCollection: 'products',   // Optional, defaults to 'products'
+    plansCollection: 'plans',         // Optional, defaults to 'plans'
     syncCustomers: true,              // Optional, defaults to true
+    
+    // Callback to process backend business logic (e.g. grant/revoke AI credits)
+    onCheckoutSessionUpdate: async (uid, session, paymentDetails) => {
+        if (session.status === 'paid') {
+            console.log(`User ${uid} successfully paid for checkout session ${session.id}`);
+        }
+    },
+    onSubscriptionUpdate: async (uid, subscription, subscriptionDetails) => {
+        console.log(`Subscription ${subscription.id} for user ${uid} transitioned to: ${subscription.status}`);
+    }
 });
 
 // 3. Export functions as flat deployable Cloud Functions
@@ -49,6 +60,7 @@ export const cancelSubscription = rzpFuncs.cancelSubscription;
 export const updateSubscriptionPlan = rzpFuncs.updateSubscriptionPlan;
 export const createPlan = rzpFuncs.createPlan;
 export const syncPlans = rzpFuncs.syncPlans;
+export const createProduct = rzpFuncs.createProduct;
 ```
 
 ---
@@ -75,7 +87,7 @@ If any required credential is missing (`keyId`, `keySecret`, or `webhookSecret`)
     *   `cancelSubscription`: Handles secure cancellation requests.
     *   `updateSubscriptionPlan`: Handles secure plan upgrades/downgrades, validating target `planId` against the products catalog collection.
 5.  **Admin Callables**:
-    *   `createPlan` / `syncPlans`: Enabled for users with custom claims (`admin: true`) to batch-sync catalogs from Razorpay using high-performance Firestore write batching.
+    *   `createPlan` / `syncPlans` / `createProduct`: Enabled for users with custom claims (`admin: true`) to batch-sync catalogs or directly define products/plans using high-performance Firestore write operations.
 
 ---
 
@@ -101,6 +113,9 @@ service cloud.firestore {
     match /products/{productId} {
       allow read: if true;
       allow write: if false;
+    }
+    match /plans/{planId} {
+      allow read, write: if false;
     }
 
     // ── Customer Documents ──

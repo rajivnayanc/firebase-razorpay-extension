@@ -35,7 +35,31 @@ const rzpFuncs = initializeRazorpay({
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
     customersCollection: 'customers', // Optional, defaults to 'customers'
     productsCollection: 'products',   // Optional, defaults to 'products'
+    plansCollection: 'plans',         // Optional, defaults to 'plans'
     syncCustomers: true,              // Optional, defaults to true
+
+    // Direct callback triggers on webhook updates (e.g. status changes or success)
+    onCheckoutSessionUpdate: async (uid, session, paymentDetails) => {
+        if (session.status === 'paid') {
+            const db = admin.firestore();
+            const userRef = db.collection('users').doc(uid);
+            const creditsToAdd = session.productId === 'credit-pack-100' ? 100 : 0;
+            if (creditsToAdd > 0) {
+                await userRef.update({
+                    credits: admin.firestore.FieldValue.increment(creditsToAdd)
+                });
+            }
+        }
+    },
+    onSubscriptionUpdate: async (uid, subscription, subscriptionDetails) => {
+        const db = admin.firestore();
+        const userRef = db.collection('users').doc(uid);
+        if (subscription.status === 'active') {
+            await userRef.update({ tier: 'premium' });
+        } else if (subscription.status === 'cancelled') {
+            await userRef.update({ tier: 'free' });
+        }
+    }
 });
 
 // Export functions to make them flat deployable Cloud Functions
@@ -49,6 +73,7 @@ export const cancelSubscription = rzpFuncs.cancelSubscription;
 export const updateSubscriptionPlan = rzpFuncs.updateSubscriptionPlan;
 export const createPlan = rzpFuncs.createPlan;
 export const syncPlans = rzpFuncs.syncPlans;
+export const createProduct = rzpFuncs.createProduct;
 ```
 
 ---
@@ -63,10 +88,13 @@ The `initializeRazorpay` factory accepts a configuration object matching the fol
 | `keySecret` | `string` | **Yes** | Your private Razorpay Key Secret. |
 | `webhookSecret` | `string` | **Yes** | Webhook secret key configured in the Razorpay Webhook Dashboard. |
 | `customersCollection` | `string` | No | Firestore collection path where customer metadata is synchronized. Defaults to `'customers'`. |
-| `productsCollection` | `string` | No | Firestore collection path where products catalog and plans are stored. Defaults to `'products'`. |
+| `productsCollection` | `string` | No | Firestore collection path where products catalog is stored. Defaults to `'products'`. |
+| `plansCollection` | `string` | No | Firestore collection path where subscription plans are synchronized. Defaults to `'plans'`. |
 | `syncCustomers` | `boolean` | No | Automatically synchronizes customers on Auth user creation. Defaults to `true`. |
 | `eventarcChannel` | `string` | No | Optional Eventarc channel path to publish events. |
 | `allowedEventTypes` | `string[]` | No | List of permitted Eventarc notification event types. |
+| `onCheckoutSessionUpdate` | `OnCheckoutSessionUpdate` | No | Callback triggered when a checkout session status updates. |
+| `onSubscriptionUpdate` | `OnSubscriptionUpdate` | No | Callback triggered when a subscription status updates. |
 
 > [!IMPORTANT]
 > **Strict Error Checks**: The factory validates the configuration during function startup. If `keyId`, `keySecret`, or `webhookSecret` are missing, or if the `keyId` format is invalid (e.g. doesn't start with `rzp_`), **initialization throws a runtime Error immediately**. This prevents functions from deploying in a silently broken state.
@@ -89,7 +117,7 @@ The returned object contains the following pre-built functions ready for deploym
     *   `cancelSubscription`: Gated user function to terminate active subscriptions.
     *   `updateSubscriptionPlan`: Securely validates plan upgrades/downgrades against allowed plans before updating.
 5.  **Administrative Callables**:
-    *   `createPlan` / `syncPlans`: Restricted to users with custom admin claims (`admin: true`). Enables syncing products and plans from Razorpay using high-performance batch operations.
+    *   `createPlan` / `syncPlans` / `createProduct`: Restricted to users with custom admin claims (`admin: true`). Enables syncing products, registering plans, or manually managing direct one-time/subscription shell definitions in Firestore.
 
 ---
 

@@ -79,18 +79,15 @@ export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Raz
             throw new HttpsError('not-found', 'Subscription not found');
         }
 
-        // SEC-07: Validate that the planId is valid and belongs to an active product
-        const productsSnap = await typedFs.getProductsCollection()
-            .where('active', '==', true)
-            .get();
-
-        const isAllowed = productsSnap.docs.some(productDoc => {
-            const data = productDoc.data();
-            return data.allowedPlans && Object.values(data.allowedPlans).includes(planId);
-        });
-
-        if (!isAllowed) {
+        // Validate that the planId exists and is active
+        const planSnap = await typedFs.getPlanDoc(planId).get();
+        if (!planSnap.exists) {
             throw new HttpsError('invalid-argument', 'The specified plan is not available.');
+        }
+
+        const planData = planSnap.data();
+        if (!planData || !planData.active) {
+            throw new HttpsError('invalid-argument', 'The specified plan is not active.');
         }
 
         try {

@@ -9,7 +9,8 @@ import {
     ProductDoc,
     CheckoutSessionDoc,
     SubscriptionDoc,
-    WebhookEventDoc
+    WebhookEventDoc,
+    SanitizedPlan
 } from '../types';
 
 const converter = <T>() => ({
@@ -38,6 +39,14 @@ export class TypedFirestore {
 
     getProductDoc(productId: string) {
         return this.getProductsCollection().doc(productId);
+    }
+
+    getPlansCollection() {
+        return this.db.collection(this.config.plansCollection).withConverter(converter<SanitizedPlan>());
+    }
+
+    getPlanDoc(planId: string) {
+        return this.getPlansCollection().doc(planId);
     }
 
     getCheckoutSessionsCollection(uid: string) {

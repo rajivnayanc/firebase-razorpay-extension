@@ -47,14 +47,16 @@ export const handlePaymentEvent = async (
         return;
     }
 
-    const fetchedEntity = fetchedPayment || fetchedOrder;
-
-    if (!fetchedEntity) {
-        logs.error(new Error(`Failed to resolve entity for event: ${event.event}`));
-        return;
+    // Fetch associated order if this is a payment event and we need fallback values
+    if (isPayment && fetchedPayment && fetchedPayment.order_id) {
+        try {
+            fetchedOrder = await fetchWithBackoff(() => razorpayClient.orders.fetch(fetchedPayment!.order_id!));
+        } catch (orderErr: any) {
+            logs.error(new Error(`Failed to fetch associated order ${fetchedPayment.order_id} for payment: ${orderErr.message}`));
+        }
     }
 
-    const notes = fetchedEntity.notes;
+    const notes = fetchedPayment?.notes || fetchedOrder?.notes;
     const sessionId = notes?.sessionId ? String(notes.sessionId) : undefined;
 
     let uid: string | undefined;
@@ -67,13 +69,17 @@ export const handlePaymentEvent = async (
         if (mappedUid) {
             uid = mappedUid;
         } else {
-            logs.error(new Error(`Failed to map Razorpay Customer ID ${customerId} to a Firebase UID. Rejecting webhook.`));
-            return;
+            logs.info(`Razorpay Customer ID ${customerId} not mapped to a Firebase UID. Will fall back to notes.`);
         }
     }
 
+    // Fallback: use uid from payment/order notes if customerId mapping was not found or not present
+    if (!uid && notes?.uid) {
+        uid = String(notes.uid);
+    }
+
     if (!uid) {
-        logs.error(new Error(`Cannot resolve UID for event ${event.event}. No customer_id mapping and notes.uid fallback removed for security.`));
+        logs.error(new Error(`Cannot resolve UID for event ${event.event}. No customer_id mapping and no uid in notes.`));
         return;
     }
 
@@ -96,6 +102,8 @@ export const handlePaymentEvent = async (
     const docRef = typedFs.getCheckoutSessionDoc(uid, sessionId);
     const orderDocRef = typedFs.getCheckoutSessionOrderDoc(uid, sessionId);
 
+    let existingData: CheckoutSessionDoc | undefined;
+
     try {
         await db.runTransaction(async (tx) => {
             const snap = await tx.get(docRef);
@@ -104,6 +112,8 @@ export const handlePaymentEvent = async (
                 logs.error(new Error(`Checkout session ${sessionId} for user ${uid} does not exist. Possible notes injection attempt.`));
                 return;
             }
+
+            existingData = snap.data();
 
             // Secure validation: Fetch the server-written order document inside the transaction to verify order ID
             const orderSnap = await tx.get(orderDocRef);
@@ -124,7 +134,6 @@ export const handlePaymentEvent = async (
                 updated_at: FieldValue.serverTimestamp(),
             };
 
-            const existingData = snap.data();
             if (existingData?.processing_at) {
                 dataToWrite.processing_at = FieldValue.delete() as any;
             }
@@ -134,14 +143,28 @@ export const handlePaymentEvent = async (
 
             // Store raw Razorpay responses in separate subcollection documents
             if (isPayment && fetchedPayment) {
-                const paymentDocRef = typedFs.getCheckoutSessionPaymentDoc(uid, sessionId);
+                const paymentDocRef = typedFs.getCheckoutSessionPaymentDoc(uid!, sessionId);
                 tx.set(paymentDocRef, fetchedPayment);
             } else if (fetchedOrder) {
                 tx.set(orderDocRef, fetchedOrder);
             }
         });
 
-        logs.webhookProcessed(event.event, fetchedEntity.id);
+        // Execute user callback on webhook success
+        if (config.onCheckoutSessionUpdate && existingData) {
+            try {
+                const updatedSession: CheckoutSessionDoc = {
+                    ...existingData,
+                    status: newStatus,
+                    updated_at: FieldValue.serverTimestamp() as any,
+                };
+                await config.onCheckoutSessionUpdate(uid, updatedSession, fetchedPayment || undefined);
+            } catch (callbackErr: any) {
+                logs.error(new Error(`Error in onCheckoutSessionUpdate callback: ${callbackErr.message}`));
+            }
+        }
+
+        logs.webhookProcessed(event.event, fetchedPayment?.id || fetchedOrder?.id || '');
     } catch (error: any) {
         logs.error(error);
         throw error;

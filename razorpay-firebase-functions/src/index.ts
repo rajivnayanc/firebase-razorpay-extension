@@ -9,10 +9,10 @@ import { buildCreateSubscription } from './triggers/createSubscription';
 import { buildCreateCustomer } from './triggers/createCustomer';
 import { buildOnCustomerDataDeleted, buildOnUserDeleted } from './triggers/onUserDeleted';
 import { buildCancelSubscription, buildUpdateSubscriptionPlan } from './callables/subscriptions';
-import { buildCreatePlan, buildSyncPlans } from './admin';
+import { buildCreatePlan, buildSyncPlans, buildCreateProduct } from './admin';
 import { buildWebhookHandler } from './api';
 
-export { RazorpayUserConfig, RazorpaySyncConfig } from './types';
+export { RazorpayUserConfig, RazorpaySyncConfig, OnCheckoutSessionUpdate, OnSubscriptionUpdate } from './types';
 
 export function initializeRazorpay(userConfig: RazorpayUserConfig) {
     // 1. Log initialization
@@ -36,9 +36,12 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         webhookSecret: userConfig.webhookSecret,
         customersCollection: userConfig.customersCollection || 'customers',
         productsCollection: userConfig.productsCollection || 'products',
+        plansCollection: userConfig.plansCollection || 'plans',
         syncCustomers: userConfig.syncCustomers ?? true,
         eventarcChannel: userConfig.eventarcChannel,
         allowedEventTypes: userConfig.allowedEventTypes,
+        onCheckoutSessionUpdate: userConfig.onCheckoutSessionUpdate,
+        onSubscriptionUpdate: userConfig.onSubscriptionUpdate,
     };
 
     // 4. Initialize Razorpay Client once
@@ -90,5 +93,6 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         // Admin callables
         createPlan: buildCreatePlan(config, rzpClient),
         syncPlans: buildSyncPlans(config, rzpClient),
+        createProduct: buildCreateProduct(config),
     };
 }

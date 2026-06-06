@@ -1,10 +1,10 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, HttpsError, CallableRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
 import { logs } from './logs';
-import { RazorpaySyncConfig, ProductDoc } from './types';
-import { syncPlanToProduct, generateProductId, generatePlanKey, sanitizePlan } from './utils';
+import { RazorpaySyncConfig, ProductDoc, CreateProductRequest } from './types';
+import { syncPlanToProduct, generateProductId, sanitizePlan } from './utils';
 import { TypedFirestore } from './utils/typedFirestore';
 import { Plans } from 'razorpay/dist/types/plans';
 
@@ -119,17 +119,11 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
                     name: plans[0].item?.name || 'Razorpay Product',
                     description: plans[0].item?.description || '',
                     active: true,
-                    allowedPlans: {},
                     created_at: FieldValue.serverTimestamp(),
                 };
 
-                productData.allowedPlans = productData.allowedPlans || {};
-                productData.plans = productData.plans || {};
-
-                for (const plan of plans) {
-                    const planKey = generatePlanKey(plan);
-                    productData.allowedPlans[planKey] = plan.id;
-                    productData.plans[planKey] = sanitizePlan(plan);
+                if (plans.length > 0) {
+                    productData.planId = plans[0].id;
                 }
 
                 productData.type = 'subscription';
@@ -137,6 +131,13 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
                 productData._synced_via = 'admin_api';
 
                 bulkWriter.set(productDocRef, productData, { merge: true });
+
+                // Write each plan to root-level plans collection
+                for (const plan of plans) {
+                    const planDocRef = typedFs.getPlanDoc(plan.id);
+                    const planData = sanitizePlan(plan);
+                    bulkWriter.set(planDocRef, planData, { merge: true });
+                }
             }
 
             await bulkWriter.close();
@@ -146,6 +147,81 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
         } catch (err: any) {
             logs.error(err);
             throw new HttpsError('internal', 'Sync failed.', err.message);
+        }
+    });
+};
+
+export const buildCreateProduct = (config: RazorpaySyncConfig) => {
+    return onCall(async (request: CallableRequest<CreateProductRequest>) => {
+        if (!request.auth || request.auth.token.admin !== true) {
+            throw new HttpsError(
+                'permission-denied',
+                'Must be an administrative user to create products.'
+            );
+        }
+
+        const { id, name, description, type, amount, currency, planId } = request.data;
+        if (!id || !name || !type) {
+            throw new HttpsError(
+                'invalid-argument',
+                'Missing required fields: id, name, type.'
+            );
+        }
+
+        if (type !== 'one-time' && type !== 'subscription') {
+            throw new HttpsError(
+                'invalid-argument',
+                'Type must be "one-time" or "subscription".'
+            );
+        }
+
+        try {
+            const db = admin.firestore();
+            const typedFs = new TypedFirestore(db, config);
+            const productRef = typedFs.getProductDoc(id);
+
+            const productSnap = await productRef.get();
+            const existingProduct = productSnap.data();
+
+            const productData: ProductDoc = existingProduct || {
+                id,
+                name,
+                description: description || '',
+                active: true,
+                created_at: FieldValue.serverTimestamp(),
+            };
+
+            productData.name = name;
+            productData.description = description || productData.description || '';
+            productData.type = type;
+            productData.updated_at = FieldValue.serverTimestamp();
+            productData._synced_via = 'admin_sdk_api';
+
+            if (type === 'one-time') {
+                if (amount === undefined || amount <= 0 || !currency) {
+                    throw new HttpsError(
+                        'invalid-argument',
+                        'One-time products require a valid positive amount and currency.'
+                    );
+                }
+                productData.amount = amount;
+                productData.currency = currency;
+                // Remove planId if changing to one-time
+                delete productData.planId;
+            } else {
+                if (planId) {
+                    productData.planId = planId;
+                }
+                // Remove one-time fields if changing to subscription
+                delete productData.amount;
+                delete productData.currency;
+            }
+
+            await productRef.set(productData, { merge: true });
+            return productData;
+        } catch (err: any) {
+            if (err instanceof HttpsError) throw err;
+            throw new HttpsError('internal', 'Failed to create product.', err.message);
         }
     });
 };

@@ -97,33 +97,25 @@ export const buildCreateSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
             return;
         }
 
-        let planId: string | undefined;
-        const allowedPlans = productData.allowedPlans || {};
-        const interval = currentData.interval;
-
-        if (interval && allowedPlans[interval]) {
-            planId = allowedPlans[interval];
-        } else {
-            const planKeys = Object.keys(allowedPlans);
-            if (planKeys.length === 1) {
-                planId = allowedPlans[planKeys[0]];
-            }
-        }
+        const planId = productData.planId;
 
         if (!planId) {
-            logs.error(new Error(`No planId resolved for product '${currentData.productId}' (Interval: ${currentData.interval}).`));
+            logs.error(new Error(`No planId resolved for subscription product '${currentData.productId}'.`));
             await snap.ref.update({
                 status: 'failed',
-                error: 'The selected plan configuration is invalid or missing.',
+                error: 'The selected product does not have a linked plan ID.',
             });
             return;
         }
 
-        // Retrieve total_count config from resolved plan or product level
+        // Retrieve total_count config from root-level plan notes
         let resolvedTotalCount = 12;
-        if (productData.plans && interval && productData.plans[interval]) {
-            const planDetails = productData.plans[interval];
-            resolvedTotalCount = Number(planDetails.notes?.total_count) || Number(productData.plans[interval].notes?.total_count) || 12;
+        const planDoc = await typedFs.getPlanDoc(planId).get();
+        if (planDoc.exists) {
+            const planData = planDoc.data();
+            if (planData && planData.notes) {
+                resolvedTotalCount = Number(planData.notes.total_count) || 12;
+            }
         }
 
         // Acquire processing lock on the draft to prevent race conditions

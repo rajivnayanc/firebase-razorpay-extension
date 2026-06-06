@@ -19,6 +19,7 @@ export async function getUidByCustomerId(
     const typedFs = new TypedFirestore(db, {
         customersCollection: customersCollectionPath,
         productsCollection: '',
+        plansCollection: '',
         keyId: '',
         keySecret: '',
         webhookSecret: '',

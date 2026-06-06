@@ -57,7 +57,6 @@ export const syncPlanToProduct = async (
     config: RazorpaySyncConfig
 ): Promise<ProductDoc> => {
     const productId = generateProductId(plan);
-    const planKey = generatePlanKey(plan);
     const typedFs = new TypedFirestore(db, config);
     const docRef = typedFs.getProductDoc(productId);
 
@@ -67,20 +66,20 @@ export const syncPlanToProduct = async (
         name: plan.item?.name || 'Razorpay Product',
         description: plan.item?.description || '',
         active: true,
-        allowedPlans: {},
         created_at: FieldValue.serverTimestamp(),
     };
 
-    productData.allowedPlans = productData.allowedPlans || {};
-    productData.allowedPlans[planKey] = plan.id;
-
-    productData.plans = productData.plans || {};
-    productData.plans[planKey] = sanitizePlan(plan);
-
+    productData.planId = plan.id;
     productData.type = 'subscription';
     productData.updated_at = FieldValue.serverTimestamp();
     productData._synced_via = 'admin_api';
 
     await docRef.set(productData, { merge: true });
+
+    // Save plan to root-level plans collection
+    const planRef = typedFs.getPlanDoc(plan.id);
+    const planData = sanitizePlan(plan);
+    await planRef.set(planData, { merge: true });
+
     return productData;
 };

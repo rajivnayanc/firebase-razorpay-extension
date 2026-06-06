@@ -64,6 +64,8 @@ export const handleSubscriptionEvent = async (
         }
     }
 
+    let existingData: SubscriptionDoc | undefined;
+
     try {
         await db.runTransaction(async (tx) => {
             const existingDoc = await tx.get(docRef);
@@ -72,7 +74,7 @@ export const handleSubscriptionEvent = async (
                 return;
             }
 
-            const existingData = existingDoc.data();
+            existingData = existingDoc.data();
 
             const dataToWrite: Partial<SubscriptionDoc> = {
                 status: newStatus,
@@ -96,6 +98,20 @@ export const handleSubscriptionEvent = async (
                 tx.set(paymentRef, paymentEntity);
             }
         });
+
+        // Execute user callback on webhook success
+        if (config.onSubscriptionUpdate && existingData) {
+            try {
+                const updatedSubscription: SubscriptionDoc = {
+                    ...existingData,
+                    status: newStatus,
+                    updated_at: FieldValue.serverTimestamp() as any,
+                };
+                await config.onSubscriptionUpdate(uid, updatedSubscription, subscriptionEntity);
+            } catch (callbackErr: any) {
+                logs.error(new Error(`Error in onSubscriptionUpdate callback: ${callbackErr.message}`));
+            }
+        }
 
         logs.webhookProcessed(event.event, subscriptionEntity.id);
     } catch (error: any) {

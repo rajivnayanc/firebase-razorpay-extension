@@ -1,6 +1,6 @@
 {
   "name": "@neocleus/razorpay-firebase-functions",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Consumable Firebase Cloud Functions for Razorpay payments and subscriptions integration using the Factory pattern",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "razorpay": "^2.9.6",
-    "@neocleus/razorpay-firebase-types": "^1.0.1"
+    "@neocleus/razorpay-firebase-types": "^1.0.2"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

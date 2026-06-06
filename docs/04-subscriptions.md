@@ -50,9 +50,9 @@ const result = await createPlan({
 
 ---
 
-## 📊 2. Synced Product Catalog Schema
+## 📊 2. Synced Product and Plan Catalog Schema
 
-When a plan is synced via `syncPlans` or created via `createPlan`, the extension groups individual Razorpay Plan IDs (e.g. monthly vs yearly plans) under a single Firestore product catalog document.
+When a plan is synced via `syncPlans` or created via `createPlan`, the plan metadata is written to a root-level `/plans` collection, and the corresponding product catalog document links directly to the plan ID via the `planId` field.
 
 ### 📄 Synced Catalog Product Schema
 *   **Path**: `/products/{productId}`
@@ -66,32 +66,32 @@ When a plan is synced via `syncPlans` or created via `createPlan`, the extension
   "active": true,
   "type": "subscription",
   "firebaseRole": "pro_member",
-  "allowedPlans": {
-    "month": "plan_Lxyz12345Monthly",
-    "year": "plan_Labc67890Yearly"
+  "planId": "plan_Lxyz12345Monthly",
+  "_synced_via": "admin_api",
+  "updated_at": "server_timestamp"
+}
+```
+
+### 📄 Synced Plan Schema
+*   **Path**: `/plans/{planId}`
+*   **Document ID**: Razorpay Plan ID (e.g. `plan_Lxyz12345Monthly`)
+
+```json
+{
+  "id": "plan_Lxyz12345Monthly",
+  "entity": "plan",
+  "interval": 1,
+  "period": "month",
+  "item": {
+    "name": "Developer Pro Plan",
+    "amount": 99900,
+    "description": "Premium access to all courses and community support."
   },
-  "plans": {
-    "month": {
-      "id": "plan_Lxyz12345Monthly",
-      "period": "month",
-      "interval": 1,
-      "item": {
-        "name": "Developer Pro Plan",
-        "amount": 99900,
-        "description": "Premium access..."
-      }
-    },
-    "year": {
-      "id": "plan_Labc67890Yearly",
-      "period": "year",
-      "interval": 1,
-      "item": {
-        "name": "Developer Pro Plan - Annual",
-        "amount": 999000,
-        "description": "Annual saving plan..."
-      }
-    }
+  "notes": {
+    "total_count": 12
   },
+  "active": true,
+  "created_at": 1716301234,
   "_synced_via": "admin_api",
   "updated_at": "server_timestamp"
 }
@@ -119,8 +119,8 @@ To subscribe to a recurring plan, the client application writes a document conta
 The `createSubscription` Cloud Function intercepts this document creation and processes it securely:
 
 1.  **Plan ID Direct Override Guard**: Direct creation with `plan_id` in the document is rejected to prevent tampering:
-    `Providing plan_id directly is not allowed. Provide productId and interval instead.`
-2.  **Catalog-Driven Plan Resolution**: The function fetches the product document from the secure `/products` collection. It automatically resolves the Razorpay plan ID based on the client's requested `interval` (looks up `allowedPlans[interval]`). If only one plan is linked under the product, it uses that automatically as a fallback.
+    `Providing plan_id directly is not allowed. Provide productId instead.`
+2.  **Catalog-Driven Plan Resolution**: The function fetches the product document from the secure `/products` collection. It automatically resolves the Razorpay plan ID using the `planId` field defined in the product document.
 3.  **Secure Role Fetching**: Retrieves `firebaseRole` directly from the secure Firestore product catalog, mapping it to the subscription document to prepare for custom claim issuance.
 4.  **Transaction Lock**: Sets status to `processing` inside a Firestore transaction with a 2-minute zombie-lock escape hatch.
 5.  **Razorpay API Subscription Call**: Issues a subscription creation request to Razorpay, securely locking the quantity to `1`.

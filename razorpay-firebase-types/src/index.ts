@@ -19,11 +19,20 @@ export interface ProductDoc<TFieldValue = any, TTimestamp = any> {
   type?: 'subscription' | 'one-time';
   amount?: number; // In subunits (paise) for one-time
   currency?: string; // For one-time
-  allowedPlans?: Record<string, string>; // planKey -> planId
-  plans?: Record<string, SanitizedPlan<TFieldValue, TTimestamp>>; // planKey -> SanitizedPlan
+  planId?: string; // Link to plan when required (subscriptions)
   created_at?: TFieldValue | TTimestamp;
   updated_at?: TFieldValue | TTimestamp;
   _synced_via?: string;
+}
+
+export interface CreateProductRequest {
+  id: string;
+  name: string;
+  description?: string;
+  type: 'subscription' | 'one-time';
+  amount?: number; // For one-time products (in subunits, e.g. paise)
+  currency?: string; // For one-time products
+  planId?: string; // Link to plan (subscriptions)
 }
 
 export interface CustomerDoc<TFieldValue = any, TTimestamp = any> {
