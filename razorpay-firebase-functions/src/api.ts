@@ -176,8 +176,9 @@ export const buildWebhookHandler = (
 
     return onRequest({
         timeoutSeconds: 120,
-        memory: '512MiB',
-        maxInstances: 100,
+        memory: '256MiB',
+        maxInstances: 10,
         minInstances: 0,
+        ...config.webhookOptions,
     }, webhookHandlerFunc);
 };

@@ -2,6 +2,7 @@ import * as admin from 'firebase-admin';
 import * as Shared from '@neocleus/razorpay-firebase-types';
 import { Payments } from 'razorpay/dist/types/payments';
 import { Subscriptions } from 'razorpay/dist/types/subscriptions';
+import { HttpsOptions } from 'firebase-functions/v2/https';
 
 export type SanitizedPlan = Shared.SanitizedPlan<admin.firestore.FieldValue, admin.firestore.Timestamp>;
 export type ProductDoc = Shared.ProductDoc<admin.firestore.FieldValue, admin.firestore.Timestamp>;
@@ -35,6 +36,7 @@ export interface RazorpayUserConfig {
   allowedEventTypes?: string[];
   onCheckoutSessionUpdate?: OnCheckoutSessionUpdate;
   onSubscriptionUpdate?: OnSubscriptionUpdate;
+  webhookOptions?: Omit<HttpsOptions, 'cors'>;
 }
 
 export interface RazorpaySyncConfig {
@@ -49,6 +51,7 @@ export interface RazorpaySyncConfig {
   allowedEventTypes?: string[];
   onCheckoutSessionUpdate?: OnCheckoutSessionUpdate;
   onSubscriptionUpdate?: OnSubscriptionUpdate;
+  webhookOptions?: Omit<HttpsOptions, 'cors'>;
 }
 
 export interface WebhookEntityWrapper {

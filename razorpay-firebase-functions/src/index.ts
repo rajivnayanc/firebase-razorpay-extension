@@ -42,6 +42,7 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         allowedEventTypes: userConfig.allowedEventTypes,
         onCheckoutSessionUpdate: userConfig.onCheckoutSessionUpdate,
         onSubscriptionUpdate: userConfig.onSubscriptionUpdate,
+        webhookOptions: userConfig.webhookOptions,
     };
 
     // 4. Initialize Razorpay Client once
