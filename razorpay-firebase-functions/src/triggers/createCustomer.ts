@@ -2,7 +2,6 @@ import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
 import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
-import { Customers } from 'razorpay/dist/types/customers';
 import { logs } from '../logs';
 import { RazorpaySyncConfig, CustomerDoc } from '../types';
 import { TypedFirestore } from '../utils/typedFirestore';
@@ -18,11 +17,11 @@ export const buildCreateCustomer = (config: RazorpaySyncConfig, rzp: Razorpay) =
             try {
                 logs.info(`Creating Razorpay customer for new user: ${user.uid}`);
 
-                const customerParams: Customers.RazorpayCustomerCreateRequestBody = {
+                const customerParams: any = {
                     email: user.email || undefined,
                     contact: user.phoneNumber || undefined,
                     name: user.displayName || undefined,
-                    fail_existing: false,
+                    fail_existing: "0",
                     notes: {
                         firebaseUID: user.uid,
                     },
