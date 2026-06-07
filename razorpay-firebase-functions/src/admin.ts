@@ -4,7 +4,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import Razorpay from 'razorpay';
 import { logs } from './logs';
 import { RazorpaySyncConfig, ProductDoc, CreateProductRequest } from './types';
-import { syncPlanToProduct, generateProductId, sanitizePlan } from './utils';
+import { sanitizePlan } from './utils';
 import { TypedFirestore } from './utils/typedFirestore';
 import { Plans } from 'razorpay/dist/types/plans';
 
@@ -35,10 +35,13 @@ export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
             });
 
             const db = admin.firestore();
-            const productData: ProductDoc = await syncPlanToProduct(plan, db, config);
+            const typedFs = new TypedFirestore(db, config);
+            const planRef = typedFs.getPlanDoc(plan.id);
+            const planData = sanitizePlan(plan);
+            await planRef.set(planData, { merge: true });
 
-            logs.info(`Admin created plan: ${plan.id} and synced to product: ${productData.id}`);
-            return productData;
+            logs.info(`Admin created plan: ${plan.id} and saved to plans collection.`);
+            return planData;
         } catch (err: any) {
             logs.error(err);
             throw new HttpsError('internal', 'Failed to create plan.', err.message);
@@ -80,29 +83,7 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
                 }
             }
 
-            logs.info(`Fetched ${allPlans.length} plans. Grouping by product ID in memory...`);
-
-            // Group plans by productId in memory
-            const productPlansMap = new Map<string, Plans.RazorPayPlans[]>();
-            for (const plan of allPlans) {
-                const productId = generateProductId(plan);
-                if (!productPlansMap.has(productId)) {
-                    productPlansMap.set(productId, []);
-                }
-                productPlansMap.get(productId)!.push(plan);
-            }
-
-            logs.info(`Identified ${productPlansMap.size} distinct products. Reading existing products collection...`);
-
-            // Read all existing products to avoid per-document lookups
-            const productsCollection = typedFs.getProductsCollection();
-            const existingProductsSnap = await productsCollection.get();
-            const existingProducts = new Map<string, ProductDoc>();
-            for (const doc of existingProductsSnap.docs) {
-                existingProducts.set(doc.id, doc.data());
-            }
-
-            logs.info('Writing synchronized product catalogs to Firestore via BulkWriter...');
+            logs.info(`Fetched ${allPlans.length} plans. Writing to plans collection via BulkWriter...`);
 
             const bulkWriter = db.bulkWriter();
             bulkWriter.onWriteError((error) => {
@@ -110,47 +91,16 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
                 return false; // Do not retry
             });
 
-            for (const [productId, plans] of productPlansMap.entries()) {
-                const productDocRef = typedFs.getProductDoc(productId);
-                const existingProduct = existingProducts.get(productId);
-
-                const productData: ProductDoc = existingProduct || {
-                    id: productId,
-                    name: plans[0].item?.name || 'Razorpay Product',
-                    description: plans[0].item?.description || '',
-                    active: true,
-                    created_at: FieldValue.serverTimestamp(),
-                };
-
-                if (plans.length > 0) {
-                    productData.planId = plans[0].id;
-                    if (plans[0].notes && Object.keys(plans[0].notes).length > 0) {
-                        const metadata: Record<string, string> = {};
-                        for (const [key, value] of Object.entries(plans[0].notes)) {
-                            metadata[key] = String(value);
-                        }
-                        productData.metadata = metadata;
-                    }
-                }
-
-                productData.type = 'subscription';
-                productData.updated_at = FieldValue.serverTimestamp();
-                productData._synced_via = 'admin_api';
-
-                bulkWriter.set(productDocRef, productData, { merge: true });
-
-                // Write each plan to root-level plans collection
-                for (const plan of plans) {
-                    const planDocRef = typedFs.getPlanDoc(plan.id);
-                    const planData = sanitizePlan(plan);
-                    bulkWriter.set(planDocRef, planData, { merge: true });
-                }
+            for (const plan of allPlans) {
+                const planDocRef = typedFs.getPlanDoc(plan.id);
+                const planData = sanitizePlan(plan);
+                bulkWriter.set(planDocRef, planData, { merge: true });
             }
 
             await bulkWriter.close();
 
-            logs.info(`Admin synced ${allPlans.length} plans successfully across ${productPlansMap.size} products.`);
-            return { status: 'SUCCESS', count: allPlans.length, productsCount: productPlansMap.size };
+            logs.info(`Admin synced ${allPlans.length} plans successfully.`);
+            return { status: 'SUCCESS', count: allPlans.length };
         } catch (err: any) {
             logs.error(err);
             throw new HttpsError('internal', 'Sync failed.', err.message);
