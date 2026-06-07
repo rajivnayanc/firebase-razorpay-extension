@@ -17,33 +17,21 @@ export const handleSubscriptionEvent = async (
 ) => {
     const webhookSubscription = event.payload.subscription?.entity;
 
-    if (!webhookSubscription?.id) {
-        logs.error(new Error(`Missing subscription entity or ID in webhook payload: ${event.id}`));
-        return;
-    }
+    if (!webhookSubscription?.id) return;
 
     let subscriptionEntity: Subscriptions.RazorpaySubscription;
     try {
         subscriptionEntity = await fetchWithBackoff(() => razorpayClient.subscriptions.fetch(webhookSubscription.id));
     } catch (err: any) {
-        logs.error(new Error(`Failed to fetch subscription from Razorpay API: ${webhookSubscription.id}. Error: ${err.message}`));
-        if (isTransientError(err)) {
-            throw err;
-        }
+        if (isTransientError(err)) throw err;
         return;
     }
 
     const customerId = subscriptionEntity.customer_id;
-    if (!customerId) {
-        logs.error(new Error(`No customer_id found on subscription ${subscriptionEntity.id}. Cannot resolve UID.`));
-        return;
-    }
+    if (!customerId) return;
 
     const uid = await getUidByCustomerId(customerId, config.customersCollection);
-    if (!uid) {
-        logs.error(new Error(`No Firebase UID found mapped to Razorpay Customer ID ${customerId} for subscription ${subscriptionEntity.id}`));
-        return;
-    }
+    if (!uid) return;
 
     const newStatus = String(subscriptionEntity.status);
     const subscriptionId = subscriptionEntity.id;
@@ -52,29 +40,27 @@ export const handleSubscriptionEvent = async (
     const docRef = typedFs.getSubscriptionDoc(uid, subscriptionId);
 
     let paymentEntity: Payments.RazorpayPayment | null = null;
-    const webhookPayment = event.payload.payment?.entity || (event.payload.payment?.id ? event.payload.payment : null);
+    const webhookPayment = event.payload.payment?.entity || event.payload.payment;
     if (webhookPayment?.id) {
         try {
             paymentEntity = await fetchWithBackoff(() => razorpayClient.payments.fetch(webhookPayment.id));
         } catch (err: any) {
-            logs.error(new Error(`Failed to fetch payment from Razorpay API: ${webhookPayment.id}. Error: ${err.message}`));
-            if (isTransientError(err)) {
-                throw err;
-            }
+            if (isTransientError(err)) throw err;
         }
     }
 
     let existingData: SubscriptionDoc | undefined;
+    let hasStatusChanged = false; // Tracks if we actually moved forward
 
     try {
         await db.runTransaction(async (tx) => {
             const existingDoc = await tx.get(docRef);
-            if (!existingDoc.exists) {
-                logs.error(new Error(`Subscription document does not exist in Firestore for ID: ${subscriptionId}. Rejecting webhook event.`));
-                return;
-            }
+            if (!existingDoc.exists) return;
 
             existingData = existingDoc.data();
+            
+            // --- IDEMPOTENCY CHECK ---
+            hasStatusChanged = existingData?.status !== newStatus;
 
             const dataToWrite: Partial<SubscriptionDoc> = {
                 status: newStatus,
@@ -85,31 +71,23 @@ export const handleSubscriptionEvent = async (
                 dataToWrite.processing_at = FieldValue.delete() as any;
             }
 
-            // Update status and timestamp on the main document
             tx.set(docRef, dataToWrite as SubscriptionDoc, { merge: true });
+            tx.set(typedFs.getSubscriptionDetailsDoc(uid, subscriptionId), subscriptionEntity);
 
-            // Store the raw subscription object in the canonical subcollection
-            const detailsDocRef = typedFs.getSubscriptionDetailsDoc(uid, subscriptionId);
-            tx.set(detailsDocRef, subscriptionEntity);
-
-            // Store the raw payment entity directly in the payments subcollection
             if (paymentEntity) {
-                const paymentRef = typedFs.getSubscriptionPaymentDoc(uid, subscriptionId, paymentEntity.id);
-                tx.set(paymentRef, paymentEntity);
+                tx.set(typedFs.getSubscriptionPaymentDoc(uid, subscriptionId, paymentEntity.id), paymentEntity);
+                // Dumb Sync to global customer payments collection
+                tx.set(typedFs.getCustomerPaymentDoc(uid, paymentEntity.id), paymentEntity, { merge: true });
             }
         });
 
-        // Execute user callback on webhook success
-        if (config.onSubscriptionUpdate && existingData) {
+        // --- IDEMPOTENT CALLBACK ---
+        if (hasStatusChanged && config.onSubscriptionUpdate && existingData) {
             try {
-                const updatedSubscription: SubscriptionDoc = {
-                    ...existingData,
-                    status: newStatus,
-                    updated_at: FieldValue.serverTimestamp() as any,
-                };
+                const updatedSubscription = { ...existingData, status: newStatus, updated_at: FieldValue.serverTimestamp() as any };
                 await config.onSubscriptionUpdate(uid, updatedSubscription, subscriptionEntity);
-            } catch (callbackErr: any) {
-                logs.error(new Error(`Error in onSubscriptionUpdate callback: ${callbackErr.message}`));
+            } catch (err: any) {
+                logs.error(new Error(`onSubscriptionUpdate error: ${err.message}`));
             }
         }
 

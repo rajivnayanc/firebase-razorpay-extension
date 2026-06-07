@@ -96,6 +96,22 @@ export class TypedFirestore {
         return this.getSubscriptionPaymentsCollection(uid, subscriptionId).doc(paymentId);
     }
 
+    getCustomerPaymentsCollection(uid: string) {
+        return this.getCustomerDoc(uid).collection('payments').withConverter(converter<Payments.RazorpayPayment>());
+    }
+
+    getCustomerPaymentDoc(uid: string, paymentId: string) {
+        return this.getCustomerPaymentsCollection(uid).doc(paymentId);
+    }
+
+    getCustomerOrdersCollection(uid: string) {
+        return this.getCustomerDoc(uid).collection('orders').withConverter(converter<Orders.RazorpayOrder>());
+    }
+
+    getCustomerOrderDoc(uid: string, orderId: string) {
+        return this.getCustomerOrdersCollection(uid).doc(orderId);
+    }
+
     getWebhookEventsCollection() {
         return this.db.collection('webhook_events').withConverter(converter<WebhookEventDoc>());
     }

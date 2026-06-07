@@ -19,7 +19,6 @@ export const handlePaymentEvent = async (
     const webhookOrderId = event.payload.order?.entity?.id || event.payload.order?.id;
 
     if (!webhookPaymentId && !webhookOrderId) {
-        logs.error(new Error(`Missing both payment and order IDs in webhook payload: ${event.id}`));
         return;
     }
 
@@ -40,20 +39,9 @@ export const handlePaymentEvent = async (
             isPayment = true;
         }
     } catch (err: any) {
-        logs.error(new Error(`Failed to fetch entity from Razorpay API. Event: ${event.event}. Error: ${err.message}`));
-        if (isTransientError(err)) {
-            throw err;
-        }
+        logs.error(new Error(`API Fetch Failed. Event: ${event.event}. Error: ${err.message}`));
+        if (isTransientError(err)) throw err;
         return;
-    }
-
-    // Fetch associated order if this is a payment event and we need fallback values
-    if (isPayment && fetchedPayment && fetchedPayment.order_id) {
-        try {
-            fetchedOrder = await fetchWithBackoff(() => razorpayClient.orders.fetch(fetchedPayment!.order_id!));
-        } catch (orderErr: any) {
-            logs.error(new Error(`Failed to fetch associated order ${fetchedPayment.order_id} for payment: ${orderErr.message}`));
-        }
     }
 
     const notes = fetchedPayment?.notes || fetchedOrder?.notes;
@@ -68,23 +56,40 @@ export const handlePaymentEvent = async (
         const mappedUid = await getUidByCustomerId(customerId, config.customersCollection);
         if (mappedUid) {
             uid = mappedUid;
-        } else {
-            logs.info(`Razorpay Customer ID ${customerId} not mapped to a Firebase UID. Will fall back to notes.`);
         }
     }
-
-    // Fallback: use uid from payment/order notes if customerId mapping was not found or not present
     if (!uid && notes?.uid) {
-        uid = String(notes.uid);
+        uid = String(notes.uid); // Fallback to notes
     }
 
     if (!uid) {
-        logs.error(new Error(`Cannot resolve UID for event ${event.event}. No customer_id mapping and no uid in notes.`));
+        logs.error(new Error(`Cannot resolve UID for event ${event.event}.`));
         return;
     }
 
+    const typedFs = new TypedFirestore(db, config);
+
+    // ========================================================================
+    // PART 1: THE STRIPE APPROACH ("Dumb" Mirroring)
+    // Always write the raw entity to a dedicated collection so Firestore 
+    // exactly matches Razorpay, regardless of overlapping events.
+    // ========================================================================
+    const batch = db.batch();
+    if (fetchedPayment) {
+        const paymentRef = typedFs.getCustomerPaymentDoc(uid, fetchedPayment.id);
+        batch.set(paymentRef, fetchedPayment, { merge: true });
+    }
+    if (fetchedOrder) {
+        const orderRef = typedFs.getCustomerOrderDoc(uid, fetchedOrder.id);
+        batch.set(orderRef, fetchedOrder, { merge: true });
+    }
+    await batch.commit();
+
+    // --- SMART SEGREGATION ---
+    // If there is no sessionId, this is NOT a one-time checkout session. 
+    // It is likely a subscription payment/order. We exit gracefully without throwing an error.
     if (!sessionId) {
-        logs.error(new Error(`Missing sessionId in notes for event ${event.event}.`));
+        logs.info(`Skipping ${event.event} - No sessionId in notes. Likely a Subscription event.`);
         return;
     }
 
@@ -92,40 +97,34 @@ export const handlePaymentEvent = async (
     if (isPayment && fetchedPayment) {
         if (fetchedPayment.status === 'captured') newStatus = 'paid';
         else if (fetchedPayment.status === 'failed') newStatus = 'failed';
-        else newStatus = 'processing';
     } else if (fetchedOrder) {
         if (fetchedOrder.status === 'paid') newStatus = 'paid';
-        else newStatus = 'processing';
     }
 
-    const typedFs = new TypedFirestore(db, config);
     const docRef = typedFs.getCheckoutSessionDoc(uid, sessionId);
     const orderDocRef = typedFs.getCheckoutSessionOrderDoc(uid, sessionId);
 
     let existingData: CheckoutSessionDoc | undefined;
+    let hasStatusChanged = false; // Tracks if we actually moved forward
 
     try {
         await db.runTransaction(async (tx) => {
             const snap = await tx.get(docRef);
 
             if (!snap.exists) {
-                logs.error(new Error(`Checkout session ${sessionId} for user ${uid} does not exist. Possible notes injection attempt.`));
+                logs.error(new Error(`Checkout session missing. Possible notes injection.`));
                 return;
             }
 
             existingData = snap.data();
+            hasStatusChanged = existingData?.status !== newStatus;
 
-            // Secure validation: Fetch the server-written order document inside the transaction to verify order ID
+            // --- TRUST BUT VERIFY (SECURITY) ---
             const orderSnap = await tx.get(orderDocRef);
-            if (!orderSnap.exists) {
-                logs.error(new Error(`Order details missing for session ${sessionId}. Possible notes injection.`));
-                return;
-            }
-
-            const orderData = orderSnap.data();
             const expectedOrderId = isPayment && fetchedPayment ? fetchedPayment.order_id : fetchedOrder!.id;
-            if (!orderData || orderData.id !== expectedOrderId) {
-                logs.error(new Error(`Order ID mismatch for session ${sessionId}. Expected: ${orderData?.id}, Got: ${expectedOrderId}. Possible notes injection.`));
+            
+            if (!orderSnap.exists || orderSnap.data()?.id !== expectedOrderId) {
+                logs.error(new Error(`Order ID Mismatch! Possible Notes Injection attempt.`));
                 return;
             }
 
@@ -138,29 +137,23 @@ export const handlePaymentEvent = async (
                 dataToWrite.processing_at = FieldValue.delete() as any;
             }
 
-            // Update status and timestamp on the main document
             tx.set(docRef, dataToWrite as CheckoutSessionDoc, { merge: true });
 
-            // Store raw Razorpay responses in separate subcollection documents
             if (isPayment && fetchedPayment) {
-                const paymentDocRef = typedFs.getCheckoutSessionPaymentDoc(uid!, sessionId);
-                tx.set(paymentDocRef, fetchedPayment);
+                tx.set(typedFs.getCheckoutSessionPaymentDoc(uid!, sessionId), fetchedPayment);
             } else if (fetchedOrder) {
                 tx.set(orderDocRef, fetchedOrder);
             }
         });
 
-        // Execute user callback on webhook success
-        if (config.onCheckoutSessionUpdate && existingData) {
+        // --- IDEMPOTENT CALLBACK ---
+        // Only trigger the user's custom logic if the database state ACTUALLY changed.
+        if (hasStatusChanged && config.onCheckoutSessionUpdate && existingData) {
             try {
-                const updatedSession: CheckoutSessionDoc = {
-                    ...existingData,
-                    status: newStatus,
-                    updated_at: FieldValue.serverTimestamp() as any,
-                };
+                const updatedSession = { ...existingData, status: newStatus, updated_at: FieldValue.serverTimestamp() as any };
                 await config.onCheckoutSessionUpdate(uid, updatedSession, fetchedPayment || undefined);
-            } catch (callbackErr: any) {
-                logs.error(new Error(`Error in onCheckoutSessionUpdate callback: ${callbackErr.message}`));
+            } catch (err: any) {
+                logs.error(new Error(`onCheckoutSessionUpdate error: ${err.message}`));
             }
         }
 
