@@ -74,6 +74,14 @@ export const syncPlanToProduct = async (
     productData.updated_at = FieldValue.serverTimestamp();
     productData._synced_via = 'admin_api';
 
+    if (plan.notes && Object.keys(plan.notes).length > 0) {
+        const metadata: Record<string, string> = {};
+        for (const [key, value] of Object.entries(plan.notes)) {
+            metadata[key] = String(value);
+        }
+        productData.metadata = metadata;
+    }
+
     await docRef.set(productData, { merge: true });
 
     // Save plan to root-level plans collection

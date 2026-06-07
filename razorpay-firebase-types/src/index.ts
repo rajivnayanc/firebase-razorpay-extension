@@ -20,6 +20,7 @@ export interface ProductDoc<TFieldValue = any, TTimestamp = any> {
   amount?: number; // In subunits (paise) for one-time
   currency?: string; // For one-time
   planId?: string; // Link to plan when required (subscriptions)
+  metadata?: Record<string, string>;
   created_at?: TFieldValue | TTimestamp;
   updated_at?: TFieldValue | TTimestamp;
   _synced_via?: string;
@@ -33,6 +34,7 @@ export interface CreateProductRequest {
   amount?: number; // For one-time products (in subunits, e.g. paise)
   currency?: string; // For one-time products
   planId?: string; // Link to plan (subscriptions)
+  metadata?: Record<string, string>;
 }
 
 export interface CustomerDoc<TFieldValue = any, TTimestamp = any> {

@@ -7,7 +7,7 @@ import { RazorpaySyncConfig, SubscriptionDoc } from '../types';
 import { TypedFirestore } from '../utils/typedFirestore';
 
 export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpay) => {
-    return onCall(async (request) => {
+    return onCall({ cors: true }, async (request) => {
         const uid = request.auth?.uid;
         if (!uid) {
             throw new HttpsError('unauthenticated', 'User must be authenticated to cancel a subscription');
@@ -56,7 +56,7 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
 };
 
 export const buildUpdateSubscriptionPlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
-    return onCall(async (request) => {
+    return onCall({ cors: true }, async (request) => {
         const uid = request.auth?.uid;
         if (!uid) {
             throw new HttpsError('unauthenticated', 'User must be authenticated to update a subscription');

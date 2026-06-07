@@ -9,7 +9,7 @@ import { TypedFirestore } from './utils/typedFirestore';
 import { Plans } from 'razorpay/dist/types/plans';
 
 export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
-    return onCall(async (request) => {
+    return onCall({ cors: true }, async (request) => {
         if (!request.auth || request.auth.token.admin !== true) {
             throw new HttpsError(
                 'permission-denied',
@@ -47,7 +47,7 @@ export const buildCreatePlan = (config: RazorpaySyncConfig, rzp: Razorpay) => {
 };
 
 export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
-    return onCall(async (request) => {
+    return onCall({ cors: true }, async (request) => {
         if (!request.auth || request.auth.token.admin !== true) {
             throw new HttpsError(
                 'permission-denied',
@@ -124,6 +124,13 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
 
                 if (plans.length > 0) {
                     productData.planId = plans[0].id;
+                    if (plans[0].notes && Object.keys(plans[0].notes).length > 0) {
+                        const metadata: Record<string, string> = {};
+                        for (const [key, value] of Object.entries(plans[0].notes)) {
+                            metadata[key] = String(value);
+                        }
+                        productData.metadata = metadata;
+                    }
                 }
 
                 productData.type = 'subscription';
@@ -152,7 +159,7 @@ export const buildSyncPlans = (config: RazorpaySyncConfig, rzp: Razorpay) => {
 };
 
 export const buildCreateProduct = (config: RazorpaySyncConfig) => {
-    return onCall(async (request: CallableRequest<CreateProductRequest>) => {
+    return onCall({ cors: true }, async (request: CallableRequest<CreateProductRequest>) => {
         if (!request.auth || request.auth.token.admin !== true) {
             throw new HttpsError(
                 'permission-denied',
@@ -160,7 +167,7 @@ export const buildCreateProduct = (config: RazorpaySyncConfig) => {
             );
         }
 
-        const { id, name, description, type, amount, currency, planId } = request.data;
+        const { id, name, description, type, amount, currency, planId, metadata } = request.data;
         if (!id || !name || !type) {
             throw new HttpsError(
                 'invalid-argument',
@@ -196,6 +203,18 @@ export const buildCreateProduct = (config: RazorpaySyncConfig) => {
             productData.type = type;
             productData.updated_at = FieldValue.serverTimestamp();
             productData._synced_via = 'admin_sdk_api';
+
+            if (metadata !== undefined) {
+                if (metadata && typeof metadata === 'object') {
+                    const sanitizedMetadata: Record<string, string> = {};
+                    for (const [key, value] of Object.entries(metadata)) {
+                        sanitizedMetadata[key] = String(value);
+                    }
+                    productData.metadata = sanitizedMetadata;
+                } else {
+                    delete productData.metadata;
+                }
+            }
 
             if (type === 'one-time') {
                 if (amount === undefined || amount <= 0 || !currency) {
