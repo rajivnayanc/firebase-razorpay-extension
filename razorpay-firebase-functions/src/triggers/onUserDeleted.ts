@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import * as functions from 'firebase-functions/v1';
+import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import Razorpay from 'razorpay';
 import { logs } from '../logs';
@@ -7,10 +8,10 @@ import { RazorpaySyncConfig } from '../types';
 import { TypedFirestore } from '../utils/typedFirestore';
 
 export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razorpay) => {
-    return functions.firestore
-        .document(`${config.customersCollection}/{uid}`)
-        .onDelete(async (snapshot, context) => {
-            const uid = context.params.uid;
+    return onDocumentDeleted(
+        `${config.customersCollection}/{uid}`,
+        async (event) => {
+            const uid = event.params.uid;
             const db = admin.firestore();
             const typedFs = new TypedFirestore(db, config);
             logs.info(`Customer document deleted for user ${uid}. Cleaning up...`);
@@ -53,7 +54,8 @@ export const buildOnCustomerDataDeleted = (config: RazorpaySyncConfig, rzp: Razo
             } catch (error) {
                 logs.error(new Error(`Error cleaning up customer data for user ${uid}: ${error}`));
             }
-        });
+        }
+    );
 };
 
 export const buildOnUserDeleted = (config: RazorpaySyncConfig) => {
