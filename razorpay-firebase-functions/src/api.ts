@@ -3,7 +3,6 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { Channel } from 'firebase-admin/eventarc';
 import { verifyWebhookSignature } from './security';
 import { logs } from './logs';
 import { WebhookEvent, RazorpaySyncConfig } from './types';
@@ -42,8 +41,7 @@ const ALLOWED_EVENTS = new Set([
 
 export const buildWebhookHandler = (
     config: RazorpaySyncConfig,
-    rzp: Razorpay,
-    eventChannel: Channel | null
+    rzp: Razorpay
 ) => {
     const webhookHandlerFunc = async (req: any, res: any) => {
         if (req.method !== 'POST') {
@@ -139,12 +137,6 @@ export const buildWebhookHandler = (
                 await handlePaymentEvent(event, db, rzp, config);
             }
 
-            if (eventChannel) {
-                await eventChannel.publish({
-                    type: `com.razorpay.v1.${event.event}`,
-                    data: event.payload,
-                });
-            }
 
             await webhookEventRef.update({
                 status: 'completed',

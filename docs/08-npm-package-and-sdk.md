@@ -76,6 +76,26 @@ export const syncPlans = rzpFuncs.syncPlans;
 export const createProduct = rzpFuncs.createProduct;
 ```
 
+#### 📦 Export Options: Flat vs. Namespaced (Grouped)
+To expose the functions for deployment, you can choose between two export modes:
+
+1. **Flat Exports (Default)**
+   Export each function property individually. This deploys them as flat root-level functions. The Web SDK will call callables using their plain names (e.g. `cancelSubscription`).
+   ```typescript
+   export const createOrder = rzpFuncs.createOrder;
+   export const createSubscription = rzpFuncs.createSubscription;
+   export const cancelSubscription = rzpFuncs.cancelSubscription;
+   export const updateSubscriptionPlan = rzpFuncs.updateSubscriptionPlan;
+   // ... export other triggers and callables as needed ...
+   ```
+
+2. **Namespaced / Grouped Exports (Recommended to prevent missing exports)**
+   Export the entire object as a single namespace. This ensures all triggers, webhook handlers, and callables are automatically exported without risking missing one.
+   ```typescript
+   export const rzp = initializeRazorpay({ ... });
+   ```
+   *Note: Firebase deploys these grouped functions prefixed with the group name (e.g., `rzp-cancelSubscription`). To support this, you must configure `functionPrefix: 'rzp'` in the client Web SDK config.*
+
 ---
 
 ### 📝 Parameter Reference: `RazorpayUserConfig`
@@ -91,8 +111,6 @@ The `initializeRazorpay` factory accepts a configuration object matching the fol
 | `productsCollection` | `string` | No | Firestore collection path where products catalog is stored. Defaults to `'products'`. |
 | `plansCollection` | `string` | No | Firestore collection path where subscription plans are synchronized. Defaults to `'plans'`. |
 | `syncCustomers` | `boolean` | No | Automatically synchronizes customers on Auth user creation. Defaults to `true`. |
-| `eventarcChannel` | `string` | No | Optional Eventarc channel path to publish events. |
-| `allowedEventTypes` | `string[]` | No | List of permitted Eventarc notification event types. |
 | `onCheckoutSessionUpdate` | `OnCheckoutSessionUpdate` | No | Callback triggered when a checkout session status updates. |
 | `onSubscriptionUpdate` | `OnSubscriptionUpdate` | No | Callback triggered when a subscription status updates. |
 
@@ -158,7 +176,8 @@ export function CheckoutComponent() {
     functions,
     keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '', // Do NOT hardcode test keys!
     customersCollection: 'customers', // Optional, defaults to 'customers'
-    productsCollection: 'products'    // Optional, defaults to 'products'
+    productsCollection: 'products',   // Optional, defaults to 'products'
+    functionPrefix: 'rzp'              // Optional, required if functions are exported in a namespace scope
   });
   
   // Use startCheckout and startSubscription in event handlers...

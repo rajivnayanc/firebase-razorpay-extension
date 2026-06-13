@@ -32,8 +32,6 @@ export interface RazorpayUserConfig {
   productsCollection?: string;
   plansCollection?: string;
   syncCustomers?: boolean;
-  eventarcChannel?: string;
-  allowedEventTypes?: string[];
   onCheckoutSessionUpdate?: OnCheckoutSessionUpdate;
   onSubscriptionUpdate?: OnSubscriptionUpdate;
   webhookOptions?: Omit<HttpsOptions, 'cors'>;
@@ -47,8 +45,6 @@ export interface RazorpaySyncConfig {
   productsCollection: string;
   plansCollection: string;
   syncCustomers: boolean;
-  eventarcChannel?: string;
-  allowedEventTypes?: string[];
   onCheckoutSessionUpdate?: OnCheckoutSessionUpdate;
   onSubscriptionUpdate?: OnSubscriptionUpdate;
   webhookOptions?: Omit<HttpsOptions, 'cors'>;

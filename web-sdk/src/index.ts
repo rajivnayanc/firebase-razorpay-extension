@@ -21,12 +21,27 @@ export interface RazorpayPaymentsConfig {
     keyId: string;
     customersCollection?: string;
     productsCollection?: string;
+    functionPrefix?: string;
 }
 
 export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
     const { Razorpay, isLoading: isScriptLoading, error: scriptError } = useRazorpay();
 
     const customersCollection = config.customersCollection || 'customers';
+
+    const prefix = config.functionPrefix ? (config.functionPrefix.endsWith('-') ? config.functionPrefix : `${config.functionPrefix}-`) : '';
+
+    // Grouped HTTPS callables
+    const callables = {
+        cancelSubscription: httpsCallable<{ subscriptionId: string }, { status: string }>(
+            config.functions,
+            `${prefix}cancelSubscription`
+        ),
+        updateSubscriptionPlan: httpsCallable<
+            { subscriptionId: string; planId: string; scheduleChangeAt: 'now' | 'cycle_end' },
+            { plan_id: string; status: string }
+        >(config.functions, `${prefix}updateSubscriptionPlan`),
+    };
 
     const startCheckout = async (options: {
         productId: string;
@@ -288,11 +303,7 @@ export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
     };
 
     const cancelSubscription = async (subscriptionId: string): Promise<{ status: string }> => {
-        const cancelFunc = httpsCallable<{ subscriptionId: string }, { status: string }>(
-            config.functions,
-            'cancelSubscription'
-        );
-        const res = await cancelFunc({ subscriptionId });
+        const res = await callables.cancelSubscription({ subscriptionId });
         return res.data;
     };
 
@@ -301,11 +312,7 @@ export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
         planId: string,
         scheduleChangeAt: 'now' | 'cycle_end' = 'now'
     ): Promise<{ plan_id: string; status: string }> => {
-        const updateFunc = httpsCallable<
-            { subscriptionId: string; planId: string; scheduleChangeAt: 'now' | 'cycle_end' },
-            { plan_id: string; status: string }
-        >(config.functions, 'updateSubscriptionPlan');
-        const res = await updateFunc({ subscriptionId, planId, scheduleChangeAt });
+        const res = await callables.updateSubscriptionPlan({ subscriptionId, planId, scheduleChangeAt });
         return res.data;
     };
 

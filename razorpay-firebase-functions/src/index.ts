@@ -1,5 +1,4 @@
 import Razorpay from 'razorpay';
-import { getEventarc, Channel } from 'firebase-admin/eventarc';
 import { RazorpayUserConfig, RazorpaySyncConfig } from './types';
 import { logs } from './logs';
 
@@ -18,18 +17,7 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
     // 1. Log initialization
     logs.init();
 
-    // 2. Validate required configs
-    if (!userConfig.keyId || !userConfig.keySecret) {
-        throw new Error("keyId or keySecret is missing. Razorpay functions cannot be initialized.");
-    } else if (!userConfig.keyId.startsWith('rzp_')) {
-        throw new Error(`keyId seems malformed (expected to start with 'rzp_'). Configuration is invalid.`);
-    }
-
-    if (!userConfig.webhookSecret) {
-        throw new Error('webhookSecret is missing. Razorpay functions cannot be initialized.');
-    }
-
-    // 3. Apply defaults
+    // 2. Apply defaults (deferred validation of secrets to runtime)
     const config: RazorpaySyncConfig = {
         keyId: userConfig.keyId,
         keySecret: userConfig.keySecret,
@@ -38,42 +26,40 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         productsCollection: userConfig.productsCollection || 'products',
         plansCollection: userConfig.plansCollection || 'plans',
         syncCustomers: userConfig.syncCustomers ?? true,
-        eventarcChannel: userConfig.eventarcChannel,
-        allowedEventTypes: userConfig.allowedEventTypes,
         onCheckoutSessionUpdate: userConfig.onCheckoutSessionUpdate,
         onSubscriptionUpdate: userConfig.onSubscriptionUpdate,
         webhookOptions: userConfig.webhookOptions,
     };
 
-    // 4. Initialize Razorpay Client once
-    const rzpClient = new Razorpay({
-        key_id: config.keyId,
-        key_secret: config.keySecret,
+    // 3. Lazy initialize Razorpay Client
+    let rzpClientInstance: Razorpay | null = null;
+
+    // Wrap in Proxy to defer validation and initialization to runtime property access
+    const rzpClient = new Proxy({} as Razorpay, {
+        get(target, prop, receiver) {
+            if (!rzpClientInstance) {
+                // Validate required configs at runtime on first API request or access
+                if (!config.keyId || !config.keySecret) {
+                    throw new Error("keyId or keySecret is missing. Razorpay functions cannot be initialized.");
+                } else if (!config.keyId.startsWith('rzp_')) {
+                    throw new Error(`keyId seems malformed (expected to start with 'rzp_'). Configuration is invalid.`);
+                }
+
+                if (!config.webhookSecret) {
+                    throw new Error('webhookSecret is missing. Razorpay functions cannot be initialized.');
+                }
+
+                rzpClientInstance = new Razorpay({
+                    key_id: config.keyId,
+                    key_secret: config.keySecret,
+                });
+            }
+            const value = Reflect.get(rzpClientInstance, prop, receiver);
+            return typeof value === 'function' ? value.bind(rzpClientInstance) : value;
+        }
     });
 
-    // Allow overriding the API base URL (for emulator/integration testing ONLY)
-    if (process.env.RAZORPAY_API_URL) {
-        if (process.env.NODE_ENV === 'production') {
-            logs.error(new Error('RAZORPAY_API_URL is set in production. This is a security risk (SSRF). Ignoring.'));
-        } else {
-            logs.info(`Initializing Razorpay client with custom base URL: ${process.env.RAZORPAY_API_URL}`);
-            (rzpClient as any).api.rq.defaults.baseURL = process.env.RAZORPAY_API_URL;
-        }
-    }
-
-    // 5. Initialize Eventarc channel if configured
-    let eventChannel: Channel | null = null;
-    if (config.eventarcChannel) {
-        try {
-            eventChannel = getEventarc().channel(config.eventarcChannel, {
-                allowedEventTypes: config.allowedEventTypes,
-            });
-        } catch (e: any) {
-            logs.error(`Failed to initialize Eventarc channel: ${e.message || e}`);
-        }
-    }
-
-    // 6. Build and return grouped functions
+    // 5. Build and return grouped functions
     return {
         // Session and Subscription Firestore Triggers
         createOrder: buildCreateOrder(config, rzpClient),
@@ -85,7 +71,7 @@ export function initializeRazorpay(userConfig: RazorpayUserConfig) {
         onCustomerDataDeleted: buildOnCustomerDataDeleted(config, rzpClient),
 
         // HTTPS Webhook Handler
-        webhookHandler: buildWebhookHandler(config, rzpClient, eventChannel),
+        webhookHandler: buildWebhookHandler(config, rzpClient),
 
         // Client Callables
         cancelSubscription: buildCancelSubscription(config, rzpClient),
