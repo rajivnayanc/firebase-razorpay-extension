@@ -13,7 +13,7 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
             throw new HttpsError('unauthenticated', 'User must be authenticated to cancel a subscription');
         }
 
-        const { subscriptionId } = request.data;
+        const { subscriptionId, cancelAtCycleEnd } = request.data;
         if (!subscriptionId) {
             throw new HttpsError('invalid-argument', 'The "subscriptionId" must be provided');
         }
@@ -33,7 +33,10 @@ export const buildCancelSubscription = (config: RazorpaySyncConfig, rzp: Razorpa
         }
 
         try {
-            const cancelledSubscription = await rzp.subscriptions.cancel(subscriptionId);
+            const cancelledSubscription = await rzp.subscriptions.cancel(
+                subscriptionId,
+                cancelAtCycleEnd === true
+            );
 
             // Update main document status & timestamps only
             const updateData: Partial<SubscriptionDoc> = {

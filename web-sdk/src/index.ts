@@ -33,7 +33,7 @@ export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
 
     // Grouped HTTPS callables
     const callables = {
-        cancelSubscription: httpsCallable<{ subscriptionId: string }, { status: string }>(
+        cancelSubscription: httpsCallable<{ subscriptionId: string; cancelAtCycleEnd?: boolean }, { status: string }>(
             config.functions,
             `${prefix}cancelSubscription`
         ),
@@ -302,8 +302,11 @@ export function useRazorpayPayments(config: RazorpayPaymentsConfig) {
         });
     };
 
-    const cancelSubscription = async (subscriptionId: string): Promise<{ status: string }> => {
-        const res = await callables.cancelSubscription({ subscriptionId });
+    const cancelSubscription = async (
+        subscriptionId: string,
+        cancelAtCycleEnd?: boolean
+    ): Promise<{ status: string }> => {
+        const res = await callables.cancelSubscription({ subscriptionId, cancelAtCycleEnd });
         return res.data;
     };
 
