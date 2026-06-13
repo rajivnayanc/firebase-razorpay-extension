@@ -1,6 +1,6 @@
 {
   "name": "@neocleus/razorpay-firebase-web-sdk",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Client Web SDK for Razorpay Firebase Extension",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
