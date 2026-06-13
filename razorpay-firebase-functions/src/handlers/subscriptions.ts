@@ -82,10 +82,22 @@ export const handleSubscriptionEvent = async (
         });
 
         // --- IDEMPOTENT CALLBACK ---
-        if (hasStatusChanged && config.onSubscriptionUpdate && existingData) {
+        // Trigger if status changed, OR if it's a recurring charge/detail update
+        const shouldTriggerCallback = 
+            hasStatusChanged || 
+            event.event === 'subscription.charged' || 
+            event.event === 'subscription.updated';
+
+        if (shouldTriggerCallback && config.onSubscriptionUpdate && existingData) {
             try {
                 const updatedSubscription = { ...existingData, status: newStatus, updated_at: FieldValue.serverTimestamp() as any };
-                await config.onSubscriptionUpdate(uid, updatedSubscription, subscriptionEntity);
+                await config.onSubscriptionUpdate(
+                    uid, 
+                    updatedSubscription, 
+                    subscriptionEntity, 
+                    paymentEntity || undefined,
+                    event.event
+                );
             } catch (err: any) {
                 logs.error(new Error(`onSubscriptionUpdate error: ${err.message}`));
             }

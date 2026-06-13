@@ -44,8 +44,8 @@ const rzpFuncs = initializeRazorpay({
             console.log(`User ${uid} successfully paid for checkout session ${session.id}`);
         }
     },
-    onSubscriptionUpdate: async (uid, subscription, subscriptionDetails) => {
-        console.log(`Subscription ${subscription.id} for user ${uid} transitioned to: ${subscription.status}`);
+    onSubscriptionUpdate: async (uid, subscription, subscriptionDetails, paymentDetails, event) => {
+        console.log(`Subscription ${subscription.id} for user ${uid} transitioned to: ${subscription.status} (Triggered by event: ${event})`);
     }
 });
 

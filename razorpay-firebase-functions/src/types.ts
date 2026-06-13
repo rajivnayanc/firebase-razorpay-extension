@@ -21,7 +21,9 @@ export type OnCheckoutSessionUpdate = (
 export type OnSubscriptionUpdate = (
   uid: string,
   subscription: SubscriptionDoc,
-  subscriptionDetails: Subscriptions.RazorpaySubscription
+  subscriptionDetails: Subscriptions.RazorpaySubscription,
+  paymentDetails?: Payments.RazorpayPayment,
+  event?: string
 ) => Promise<void> | void;
 
 export interface RazorpayUserConfig {

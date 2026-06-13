@@ -51,7 +51,7 @@ const rzpFuncs = initializeRazorpay({
             }
         }
     },
-    onSubscriptionUpdate: async (uid, subscription, subscriptionDetails) => {
+    onSubscriptionUpdate: async (uid, subscription, subscriptionDetails, paymentDetails, event) => {
         const db = admin.firestore();
         const userRef = db.collection('users').doc(uid);
         if (subscription.status === 'active') {
@@ -112,7 +112,7 @@ The `initializeRazorpay` factory accepts a configuration object matching the fol
 | `plansCollection` | `string` | No | Firestore collection path where subscription plans are synchronized. Defaults to `'plans'`. |
 | `syncCustomers` | `boolean` | No | Automatically synchronizes customers on Auth user creation. Defaults to `true`. |
 | `onCheckoutSessionUpdate` | `OnCheckoutSessionUpdate` | No | Callback triggered when a checkout session status updates. |
-| `onSubscriptionUpdate` | `OnSubscriptionUpdate` | No | Callback triggered when a subscription status updates. |
+| `onSubscriptionUpdate` | `OnSubscriptionUpdate` | No | Callback triggered when a subscription status changes, or a recurring cycle charge (`subscription.charged`) or update (`subscription.updated`) occurs. |
 
 > [!IMPORTANT]
 > **Strict Error Checks**: The factory validates the configuration during function startup. If `keyId`, `keySecret`, or `webhookSecret` are missing, or if the `keyId` format is invalid (e.g. doesn't start with `rzp_`), **initialization throws a runtime Error immediately**. This prevents functions from deploying in a silently broken state.
